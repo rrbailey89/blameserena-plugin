@@ -1,10 +1,14 @@
-﻿using Dalamud.Game.Command;
+﻿using System;
+using Dalamud.Game.Command;
 using Dalamud.IoC;
 using Dalamud.Plugin;
 using System.IO;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
 using SamplePlugin.Windows;
+using Dalamud.Game.Text;
+using Dalamud.Game.Text.SeStringHandling;
+using Dalamud.Game.Gui.PartyFinder.Types;
 
 namespace SamplePlugin;
 
@@ -16,14 +20,15 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IClientState ClientState { get; private set; } = null!;
     [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
+    [PluginService] internal static IChatGui ChatGui { get; private set; } = null!;
+    [PluginService] internal static IPartyFinderGui PartyFinderGui { get; private set; } = null!;
 
-    private const string CommandName = "/pmycommand";
+    private const string CommandName = "/blameserena";
 
     public Configuration Configuration { get; init; }
 
     public readonly WindowSystem WindowSystem = new("SamplePlugin");
     private ConfigWindow ConfigWindow { get; init; }
-    private MainWindow MainWindow { get; init; }
 
     public Plugin()
     {
@@ -33,10 +38,8 @@ public sealed class Plugin : IDalamudPlugin
         var goatImagePath = Path.Combine(PluginInterface.AssemblyLocation.Directory?.FullName!, "goat.png");
 
         ConfigWindow = new ConfigWindow(this);
-        MainWindow = new MainWindow(this, goatImagePath);
 
         WindowSystem.AddWindow(ConfigWindow);
-        WindowSystem.AddWindow(MainWindow);
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
@@ -49,8 +52,8 @@ public sealed class Plugin : IDalamudPlugin
         // to toggle the display status of the configuration ui
         PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUI;
 
-        // Adds another button that is doing the same but for the main ui of the plugin
-        PluginInterface.UiBuilder.OpenMainUi += ToggleMainUI;
+        // Subscribe to Party Finder listing event
+        PartyFinderGui.ReceiveListing += OnReceivePartyFinderListing;
 
         // Add a simple message to the log with level set to information
         // Use /xllog to open the log window in-game
@@ -63,19 +66,107 @@ public sealed class Plugin : IDalamudPlugin
         WindowSystem.RemoveAllWindows();
 
         ConfigWindow.Dispose();
-        MainWindow.Dispose();
 
         CommandManager.RemoveHandler(CommandName);
+
+        // Unsubscribe from Party Finder listing event
+        PartyFinderGui.ReceiveListing -= OnReceivePartyFinderListing;
     }
 
     private void OnCommand(string command, string args)
     {
-        // in response to the slash command, just toggle the display status of our main ui
-        ToggleMainUI();
+        // Open the config window when /blameserena is used
+        ToggleConfigUI();
     }
 
     private void DrawUI() => WindowSystem.Draw();
 
     public void ToggleConfigUI() => ConfigWindow.Toggle();
-    public void ToggleMainUI() => MainWindow.Toggle();
+
+    // Handler for Party Finder listing events
+    private void OnReceivePartyFinderListing(IPartyFinderListing listing, IPartyFinderListingEventArgs args)
+    {
+        // Only proceed if notifications are enabled and config is valid
+        if (!Configuration.EnableNotifications || Configuration.TargetChannelId == 0 || string.IsNullOrEmpty(Configuration.BotApiEndpoint))
+            return;
+
+        // Log every listing received for debugging
+        Log.Information($"[PF DEBUG] ReceiveListing: ListingContentId={listing.ContentId}, LocalContentId={ClientState.LocalContentId}, Name={listing.Name?.TextValue}");
+
+        // Check if this listing belongs to the local player by comparing Content IDs.
+        if (listing.ContentId == ClientState.LocalContentId)
+        {
+            Log.Information("[PF DEBUG] Detected our own Party Finder listing using ContentId match.");
+
+            // --- Apply plugin-configurable filters ---
+            bool minIlvlFlagSet = listing.DutyFinderSettings.HasFlag(Dalamud.Game.Gui.PartyFinder.Types.DutyFinderSettingsFlags.MinimumItemLevel);
+            bool silenceEchoFlagSet = listing.DutyFinderSettings.HasFlag(Dalamud.Game.Gui.PartyFinder.Types.DutyFinderSettingsFlags.SilenceEcho);
+
+            bool passesMinIlvlFlag = !Configuration.FilterRequireMinIlvl || minIlvlFlagSet;
+            bool passesSilenceEchoFlag = !Configuration.FilterRequireSilenceEcho || silenceEchoFlagSet;
+
+            Log.Information($"[PF DEBUG] Filter Check: RequireMinIlvlFlag={Configuration.FilterRequireMinIlvl}, RequireSilenceEchoFlag={Configuration.FilterRequireSilenceEcho}");
+            Log.Information($"[PF DEBUG] Listing Values: MinIlvlFlagSet={minIlvlFlagSet}, SilenceEchoFlagSet={silenceEchoFlagSet}");
+
+            if (passesMinIlvlFlag && passesSilenceEchoFlag)
+            {
+                Log.Information("[PF DEBUG] Listing meets configured filter criteria.");
+
+                // Extract necessary information, handling potential nulls for safety
+                var playerName = ClientState.LocalPlayer?.Name.TextValue ?? "Unknown Player (Local)";
+                var dutyName = listing.Duty.Value.Name.ToString();
+                // Use the custom description and password from configuration
+                var description = Configuration.Description ?? "";
+                var partyFinderPassword = Configuration.PartyFinderPassword ?? "";
+
+                // Log the details before sending notification
+                Log.Information($"[PF DEBUG] Details: PlayerName={playerName}, DutyName={dutyName}, Description=\"{description}\", PartyFinderPassword=\"{partyFinderPassword}\"");
+                Log.Information($"[PF DEBUG] Sending notification to ChannelId={Configuration.TargetChannelId}, Endpoint={Configuration.BotApiEndpoint}");
+
+                // Send notification (async fire-and-forget)
+                _ = SendPartyFinderNotificationAsync(playerName, dutyName, description, partyFinderPassword, Configuration.TargetChannelId, Configuration.RoleId, Configuration.BotApiEndpoint);
+            }
+            else
+            {
+                Log.Information("[PF DEBUG] Listing does not meet configured filter criteria. Notification skipped.");
+            }
+        }
+        else
+        {
+            // This listing is not ours, ignore it for notification purposes
+            Log.Information($"[PF DEBUG] Received listing is not our own (ContentId mismatch).");
+        }
+    }
+
+    private async System.Threading.Tasks.Task SendPartyFinderNotificationAsync(string playerName, string dutyName, string description, string partyFinderPassword, ulong channelId, ulong roleId, string apiEndpoint)
+    {
+        try
+        {
+            using var httpClient = new System.Net.Http.HttpClient();
+            var payload = new
+            {
+                PlayerName = playerName,
+                DutyName = dutyName,
+                Description = description,
+                PartyFinderPassword = partyFinderPassword,
+                ChannelId = channelId,
+                RoleId = roleId
+            };
+            var json = System.Text.Json.JsonSerializer.Serialize(payload);
+            var content = new System.Net.Http.StringContent(json, System.Text.Encoding.UTF8, "application/json");
+            var response = await httpClient.PostAsync(apiEndpoint, content);
+            if (response.IsSuccessStatusCode)
+            {
+                Log.Information($"Party Finder notification sent successfully for: {playerName} - {dutyName} - {channelId} - {roleId}");
+            }
+            else
+            {
+                Log.Error($"Failed to send Party Finder notification. Status Code: {response.StatusCode}. Response: {await response.Content.ReadAsStringAsync()}");
+            }
+        }
+        catch (System.Exception ex)
+        {
+            Log.Error($"Exception sending Party Finder notification: {ex}");
+        }
+    }
 }
