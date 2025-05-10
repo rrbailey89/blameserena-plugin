@@ -8,13 +8,14 @@ namespace SamplePlugin.Windows;
 public class ConfigWindow : Window, IDisposable
 {
     private Configuration configuration;
+    private bool isCollapsed = false;
 
     // We give this window a constant ID using ###
     // This allows for labels being dynamic, like "{FPS Counter}fps###XYZ counter window",
     // and the window ID will always be "###XYZ counter window" for ImGui
     public ConfigWindow(Plugin plugin) : base("A Wonderful Configuration Window###With a constant ID")
     {
-        Flags = ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoScrollbar |
+        Flags = ImGuiWindowFlags.NoScrollbar |
                 ImGuiWindowFlags.NoScrollWithMouse;
 
         Size = new Vector2(232, 90);
@@ -36,10 +37,27 @@ public class ConfigWindow : Window, IDisposable
         {
             Flags |= ImGuiWindowFlags.NoMove;
         }
+
+        // Handle double-click on title bar
+        if (ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left) && ImGui.IsWindowHovered(ImGuiHoveredFlags.RootWindow))
+        {
+            isCollapsed = !isCollapsed;
+            if (isCollapsed)
+            {
+                Flags |= ImGuiWindowFlags.NoCollapse;
+            }
+            else
+            {
+                Flags &= ~ImGuiWindowFlags.NoCollapse;
+            }
+        }
     }
 
     public override void Draw()
     {
+        if (isCollapsed)
+            return;
+
         // can't ref a property, so use a local copy
         var configValue = configuration.SomePropertyToBeSavedAndWithADefault;
         if (ImGui.Checkbox("Random Config Bool", ref configValue))
@@ -61,21 +79,6 @@ public class ConfigWindow : Window, IDisposable
         if (ImGui.Checkbox("Enable Party Finder Notifications", ref enableNotifications))
         {
             configuration.EnableNotifications = enableNotifications;
-            configuration.Save();
-        }
-
-        // --- Party Finder Listing Filter Settings ---
-        var filterRequireMinIlvl = configuration.FilterRequireMinIlvl;
-        if (ImGui.Checkbox("Require Minimum IL (checkbox enabled in listing)", ref filterRequireMinIlvl))
-        {
-            configuration.FilterRequireMinIlvl = filterRequireMinIlvl;
-            configuration.Save();
-        }
-
-        var filterRequireSilenceEcho = configuration.FilterRequireSilenceEcho;
-        if (ImGui.Checkbox("Require Silence Echo (checkbox enabled in listing)", ref filterRequireSilenceEcho))
-        {
-            configuration.FilterRequireSilenceEcho = filterRequireSilenceEcho;
             configuration.Save();
         }
 
