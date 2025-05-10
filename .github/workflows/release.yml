@@ -1,0 +1,52 @@
+name: Build and Release BlameSerena
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '7.0.x'
+
+    - name: Build
+      run: dotnet build BlameSerena/BlameSerena.csproj -c Release
+
+    - name: Create images directory and move logo
+      run: |
+        mkdir -p BlameSerena/bin/Release/BlameSerena/images
+        copy Data/logo.png BlameSerena/bin/Release/BlameSerena/images/logo.png
+
+    - name: Zip plugin
+      run: |
+        cd BlameSerena/bin/Release/BlameSerena
+        powershell -Command "Compress-Archive -Path BlameSerena.dll,images/logo.png -DestinationPath ../../../BlameSerena.zip"
+
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Release ${{ github.ref }}
+        draft: false
+        prerelease: false
+
+    - name: Upload Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./BlameSerena.zip
+        asset_name: BlameSerena.zip
+        asset_content_type: application/zip 
