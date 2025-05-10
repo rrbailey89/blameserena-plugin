@@ -13,7 +13,7 @@ using System.Text;
 using Dalamud.Interface.Windowing;
 using ImGuiNET;
 using Dalamud.Plugin.Services;
-using SamplePlugin.Windows;
+using BlameSerena.Windows;
 using Dalamud.Game.Gui.PartyFinder;
 using Dalamud.Game.Gui.PartyFinder.Types;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
@@ -23,7 +23,7 @@ using FFXIVClientStructs.FFXIV.Component.GUI;
 using FFXIVClientStructs.FFXIV.Client.System.String;
 using FFXIVClientStructs.FFXIV.Client.UI.Info;
 
-namespace SamplePlugin;
+namespace BlameSerena;
 
 public sealed class Plugin : IDalamudPlugin
 {
@@ -39,12 +39,14 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IAddonLifecycle AddonLifecycle { get; private set; } = null!;
     [PluginService] internal static IPartyFinderGui PartyFinderGui { get; private set; } = null!;
 
-    private const string CommandName = "/blameserena";
+    private const string MainWindowCommandName = "/blameserena";
+    private const string ConfigWindowCommandName = "/blameserenaconfig";
     private const string LfgCondAddon = "LookingForGroupCondition";
 
     public Configuration Configuration { get; init; }
-    public readonly WindowSystem WindowSystem = new("SamplePlugin");
+    public readonly WindowSystem WindowSystem = new("BlameSerena");
     private ConfigWindow ConfigWindow { get; init; }
+    private MainWindow MainWindow { get; init; }
 
     // New event-driven PF state fields
     private bool condWindowOpen = false;
@@ -66,13 +68,23 @@ public sealed class Plugin : IDalamudPlugin
         ConfigWindow = new ConfigWindow(this);
         WindowSystem.AddWindow(ConfigWindow);
 
-        CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
+        var logoPath = Path.Combine(PluginInterface.AssemblyLocation.DirectoryName!, "logo.png");
+        MainWindow = new MainWindow(this, logoPath);
+        WindowSystem.AddWindow(MainWindow);
+
+        CommandManager.AddHandler(MainWindowCommandName, new CommandInfo(OnBlameSerenaMainCommand)
         {
-            HelpMessage = "Opens the configuration window for BlameSerena PF Notifier."
+            HelpMessage = "Shows or hides the main plugin window."
+        });
+
+        CommandManager.AddHandler(ConfigWindowCommandName, new CommandInfo(OnBlameSerenaConfigCommand)
+        {
+            HelpMessage = "Shows or hides the configuration window for BlameSerena."
         });
 
         PluginInterface.UiBuilder.Draw += DrawUI;
         PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUI;
+        PluginInterface.UiBuilder.OpenMainUi += OnBlameSerenaMainUi;
 
         // Register only the new event-driven hooks
         AddonLifecycle.RegisterListener(AddonEvent.PostSetup, LfgCondAddon, OnCondWindow);
@@ -88,12 +100,19 @@ public sealed class Plugin : IDalamudPlugin
 
         WindowSystem.RemoveAllWindows();
         ConfigWindow.Dispose();
-        CommandManager.RemoveHandler(CommandName);
+        CommandManager.RemoveHandler(MainWindowCommandName);
+        CommandManager.RemoveHandler(ConfigWindowCommandName);
+        PluginInterface.UiBuilder.OpenMainUi -= OnBlameSerenaMainUi;
 
         Log.Information($"=== {PluginInterface.Manifest.Name} Unloaded ===");
     }
 
-    private void OnCommand(string command, string args) => ToggleConfigUI();
+    private void OnBlameSerenaMainCommand(string command, string args) => MainWindow.Toggle();
+
+    private void OnBlameSerenaConfigCommand(string command, string args) => ConfigWindow.Toggle();
+
+    private void OnBlameSerenaMainUi() => MainWindow.Toggle();
+
     private void DrawUI() => WindowSystem.Draw();
     public void ToggleConfigUI() => ConfigWindow.Toggle();
 
@@ -114,17 +133,6 @@ public sealed class Plugin : IDalamudPlugin
             tempPwdState = r.Password;
             tempFlags = (byte)r.DutyFinderSettingFlags;
 
-            // Fallback logic for comment: if blank, use config; if both blank, send empty
-            if (string.IsNullOrWhiteSpace(tempComment) && !string.IsNullOrWhiteSpace(Configuration.Description))
-            {
-                tempComment = Configuration.Description;
-                Log.Debug($"[CustomRecruitButton] PF comment was blank, using description from configuration: '{tempComment}'");
-            }
-            else if (string.IsNullOrWhiteSpace(tempComment) && string.IsNullOrWhiteSpace(Configuration.Description))
-            {
-                tempComment = string.Empty;
-                Log.Debug("[CustomRecruitButton] Both PF comment and config description are blank, sending empty description.");
-            }
             Log.Debug($"[CustomRecruitButton] Stored temp data: DutyId={tempDutyId}, Comment='{tempComment}', PwdState={tempPwdState}, Flags={tempFlags}");
         }
         else

@@ -2,7 +2,7 @@
 using Dalamud.Plugin;
 using System;
 
-namespace SamplePlugin;
+namespace BlameSerena;
 
 [Serializable]
 public class Configuration : IPluginConfiguration
@@ -23,11 +23,6 @@ public class Configuration : IPluginConfiguration
     /// The password for the party finder listing.
     /// </summary>
     public string PartyFinderPassword { get; set; } = string.Empty;
-
-    /// <summary>
-    /// The description for the party finder listing.
-    /// </summary>
-    public string Description { get; set; } = string.Empty;
 
     // the below exist just to make saving less cumbersome
     public void Save()

@@ -3,7 +3,7 @@ using System.Numerics;
 using Dalamud.Interface.Windowing;
 using ImGuiNET;
 
-namespace SamplePlugin.Windows;
+namespace BlameSerena.Windows;
 
 public class ConfigWindow : Window, IDisposable
 {
@@ -13,7 +13,7 @@ public class ConfigWindow : Window, IDisposable
     // We give this window a constant ID using ###
     // This allows for labels being dynamic, like "{FPS Counter}fps###XYZ counter window",
     // and the window ID will always be "###XYZ counter window" for ImGui
-    public ConfigWindow(Plugin plugin) : base("A Wonderful Configuration Window###With a constant ID")
+    public ConfigWindow(Plugin plugin) : base("BlameSerena Configuration Window###With a constant ID")
     {
         Flags = ImGuiWindowFlags.NoScrollbar |
                 ImGuiWindowFlags.NoScrollWithMouse;
@@ -140,15 +140,5 @@ public class ConfigWindow : Window, IDisposable
             }
         }
 
-        // Party Finder Description
-        var pfDescription = configuration.Description ?? string.Empty;
-        if (ImGui.InputTextMultiline("Party Finder Description", ref pfDescription, 256, new Vector2(220, 60)))
-        {
-            if (pfDescription != configuration.Description)
-            {
-                configuration.Description = pfDescription;
-                configuration.Save();
-            }
-        }
     }
 }

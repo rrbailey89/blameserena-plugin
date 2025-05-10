@@ -1,0 +1,12 @@
+{
+  "Author": "Serena Eclipse",
+  "Name": "BlameSerena",
+  "Punchline": "A plugin to blame Serena for everything.",
+  "Description": "A plugin that helps you blame Serena for everything. Use /blameserena to open the main window.",
+  "ApplicableVersion": "any",
+  "Tags": [
+    "sample",
+    "plugin",
+    "goats"
+  ]
+}

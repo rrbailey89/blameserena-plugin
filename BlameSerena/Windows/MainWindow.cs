@@ -6,18 +6,18 @@ using Dalamud.Interface.Windowing;
 using ImGuiNET;
 using Lumina.Excel.Sheets;
 
-namespace SamplePlugin.Windows;
+namespace BlameSerena.Windows;
 
 public class MainWindow : Window, IDisposable
 {
-    private string GoatImagePath;
-    private Plugin Plugin;
+    private readonly string logoPath;
+    private readonly Plugin plugin;
 
     // We give this window a hidden ID using ##
-    // So that the user will see "My Amazing Window" as window title,
-    // but for ImGui the ID is "My Amazing Window##With a hidden ID"
-    public MainWindow(Plugin plugin, string goatImagePath)
-        : base("My Amazing Window##With a hidden ID", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
+    // So that the user will see "BlameSerena" as window title,
+    // but for ImGui the ID is "BlameSerena##With a hidden ID"
+    public MainWindow(Plugin plugin, string logoPath)
+        : base("BlameSerena##With a hidden ID", ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
     {
         SizeConstraints = new WindowSizeConstraints
         {
@@ -25,8 +25,8 @@ public class MainWindow : Window, IDisposable
             MaximumSize = new Vector2(float.MaxValue, float.MaxValue)
         };
 
-        GoatImagePath = goatImagePath;
-        Plugin = plugin;
+        this.logoPath = logoPath;
+        this.plugin = plugin;
     }
 
     public void Dispose() { }
@@ -37,11 +37,11 @@ public class MainWindow : Window, IDisposable
         // These expect formatting parameter if any part of the text contains a "%", which we can't
         // provide through our bindings, leading to a Crash to Desktop.
         // Replacements can be found in the ImGuiHelpers Class
-        ImGui.TextUnformatted($"The random config bool is {Plugin.Configuration.SomePropertyToBeSavedAndWithADefault}");
+        ImGui.TextUnformatted($"The random config bool is {plugin.Configuration.SomePropertyToBeSavedAndWithADefault}");
 
         if (ImGui.Button("Show Settings"))
         {
-            Plugin.ToggleConfigUI();
+            plugin.ToggleConfigUI();
         }
 
         ImGui.Spacing();
@@ -54,13 +54,13 @@ public class MainWindow : Window, IDisposable
             // Check if this child is drawing
             if (child.Success)
             {
-                ImGui.TextUnformatted("Have a goat:");
-                var goatImage = Plugin.TextureProvider.GetFromFile(GoatImagePath).GetWrapOrDefault();
-                if (goatImage != null)
+                ImGui.TextUnformatted("Have a logo:");
+                var logo = Plugin.TextureProvider.GetFromFile(logoPath).GetWrapOrDefault();
+                if (logo != null)
                 {
                     using (ImRaii.PushIndent(55f))
                     {
-                        ImGui.Image(goatImage.ImGuiHandle, new Vector2(goatImage.Width, goatImage.Height));
+                        ImGui.Image(logo.ImGuiHandle, new Vector2(logo.Width, logo.Height));
                     }
                 }
                 else
