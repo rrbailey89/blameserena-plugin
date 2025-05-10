@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Runtime.InteropServices;
 using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Game.Command;
@@ -10,6 +11,7 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Text;
 using Dalamud.Interface.Windowing;
+using ImGuiNET;
 using Dalamud.Plugin.Services;
 using SamplePlugin.Windows;
 using Dalamud.Game.Gui.PartyFinder;
@@ -38,55 +40,24 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IPartyFinderGui PartyFinderGui { get; private set; } = null!;
 
     private const string CommandName = "/blameserena";
-    private const string PartyFinderAddonName = "LookingForGroup";
-    private const string PartyFinderDetailAddonName = "LookingForGroupDetail";
-    private const string PartyFinderConditionAddonName = "LookingForGroupCondition";
+    private const string LfgCondAddon = "LookingForGroupCondition";
 
     public Configuration Configuration { get; init; }
     public readonly WindowSystem WindowSystem = new("SamplePlugin");
     private ConfigWindow ConfigWindow { get; init; }
 
-    // New state fields for direct agent reading
-    private bool isPluginPausedDueToManualPFOpen = false;
-    private DateTime lastDirectReadAttempt = DateTime.MinValue;
-    private static readonly TimeSpan DirectReadInterval = TimeSpan.FromSeconds(3);
+    // New event-driven PF state fields
+    private bool condWindowOpen = false;
+    private bool recruitClicked = false;
+    private ulong lastListingId = 0;   // for duplicate-send guard
+    private ulong lastDutyId = 0;
+    private int lastCommentHash = 0;
 
-    private uint lastNotifiedDutyId = 0;
-    private string lastNotifiedCommentHash = string.Empty;
-    private bool playerHasActivePFListing = false;
-    private bool notificationSentForCurrentListing = false;
-    // New flag to distinguish programmatic vs manual PF window closure
-    private bool isCleaningUpProgrammaticCheck = false;
-
-    // Snapshot + wait-for-change fields for LastViewedListing race condition
-    private uint snapshotListingId = 0;
-    private uint snapshotDutyId = 0;
-    private int snapshotCommentHashCode = 0;
-    private bool waitingForDataChange = false;
-    private int dataChangeCheckFrames = 0;
-    private const int MAX_DATA_CHANGE_FRAMES = 60; // ~1 second at 60fps
-
-    // New fields for refined pause logic
-    private bool isLookingForGroupOpen = false;
-    private bool isLookingForGroupDetailOpen = false;
-    private bool isLookingForGroupConditionOpen = false;
-
-    // State machine for background PF check
-    private enum PfCheckState
-    {
-        Idle,
-        WaitingForMainPostSetup,
-        WaitingForNode,
-        WaitingForDetailPostSetup,
-        WaitingForData,
-        Closing
-    }
-    private PfCheckState currentPfCheckState = PfCheckState.Idle;
-    private DateTime lastPfCheck = DateTime.MinValue;
-    private static readonly TimeSpan PfCheckInterval = TimeSpan.FromSeconds(10);
-    private int checkRetryCount = 0;
-    private const int MAX_CHECK_RETRIES = 10;
-    private bool isOpeningPfProgrammatically = false;
+    // Temporary storage for PF data from StoredRecruitmentInfo
+    private ushort tempDutyId = 0;
+    private string tempComment = string.Empty;
+    private ushort tempPwdState = 0;
+    private byte tempFlags = 0;
 
     public Plugin()
     {
@@ -103,14 +74,9 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.Draw += DrawUI;
         PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUI;
 
-        Framework.Update += OnFrameworkUpdate;
-
-        AddonLifecycle.RegisterListener(AddonEvent.PostSetup, PartyFinderAddonName, OnPartyFinderAddonLifecycleChange);
-        AddonLifecycle.RegisterListener(AddonEvent.PreFinalize, PartyFinderAddonName, OnPartyFinderAddonLifecycleChange);
-        AddonLifecycle.RegisterListener(AddonEvent.PostSetup, PartyFinderDetailAddonName, OnPartyFinderDetailAddonLifecycleChange);
-        AddonLifecycle.RegisterListener(AddonEvent.PreFinalize, PartyFinderDetailAddonName, OnPartyFinderDetailAddonLifecycleChange);
-        AddonLifecycle.RegisterListener(AddonEvent.PostSetup, PartyFinderConditionAddonName, OnPartyFinderConditionAddonLifecycleChange);
-        AddonLifecycle.RegisterListener(AddonEvent.PreFinalize, PartyFinderConditionAddonName, OnPartyFinderConditionAddonLifecycleChange);
+        // Register only the new event-driven hooks
+        AddonLifecycle.RegisterListener(AddonEvent.PostSetup, LfgCondAddon, OnCondWindow);
+        AddonLifecycle.RegisterListener(AddonEvent.PreFinalize, LfgCondAddon, OnCondWindow);
 
         Log.Information($"=== {PluginInterface.Manifest.Name} Loaded ===");
         Log.Information($"Monitoring Party Finder agent for own listing.");
@@ -118,10 +84,7 @@ public sealed class Plugin : IDalamudPlugin
 
     public void Dispose()
     {
-        Framework.Update -= OnFrameworkUpdate;
-        AddonLifecycle.UnregisterListener(OnPartyFinderAddonLifecycleChange);
-        AddonLifecycle.UnregisterListener(OnPartyFinderDetailAddonLifecycleChange);
-        AddonLifecycle.UnregisterListener(OnPartyFinderConditionAddonLifecycleChange);
+        AddonLifecycle.UnregisterListener(OnCondWindow);
 
         WindowSystem.RemoveAllWindows();
         ConfigWindow.Dispose();
@@ -134,499 +97,267 @@ public sealed class Plugin : IDalamudPlugin
     private void DrawUI() => WindowSystem.Draw();
     public void ToggleConfigUI() => ConfigWindow.Toggle();
 
-    private void OnPartyFinderAddonLifecycleChange(AddonEvent type, AddonArgs args)
+    // --- New event-driven PF logic ---
+
+    // Called by ImGui button to mimic native button behavior
+    private unsafe void HandleCustomRecruitButtonClick()
     {
-        if (type == AddonEvent.PostSetup)
+        Log.Debug("[CustomRecruitButton] Clicked.");
+
+        // Capture PF data from StoredRecruitmentInfo before firing the callback
+        var agent = AgentLookingForGroup.Instance();
+        if (agent != null)
         {
-            if (isOpeningPfProgrammatically && currentPfCheckState == PfCheckState.WaitingForMainPostSetup)
+            var r = agent->StoredRecruitmentInfo;
+            tempDutyId = r.SelectedDutyId;
+            tempComment = GetRecruitmentComment(ref r);
+            tempPwdState = r.Password;
+            tempFlags = (byte)r.DutyFinderSettingFlags;
+
+            // Fallback logic for comment: if blank, use config; if both blank, send empty
+            if (string.IsNullOrWhiteSpace(tempComment) && !string.IsNullOrWhiteSpace(Configuration.Description))
             {
-                Log.Debug("[PF ADDON] PartyFinder main window opened programmatically (PostSetup). Transitioning to WaitingForNode.");
-                currentPfCheckState = PfCheckState.WaitingForNode;
-                checkRetryCount = 0;
+                tempComment = Configuration.Description;
+                Log.Debug($"[CustomRecruitButton] PF comment was blank, using description from configuration: '{tempComment}'");
             }
-            else
+            else if (string.IsNullOrWhiteSpace(tempComment) && string.IsNullOrWhiteSpace(Configuration.Description))
             {
-                isLookingForGroupOpen = true;
-                Log.Debug($"[PF ADDON] PartyFinder main window state changed. IsOpen: {isLookingForGroupOpen}");
-                UpdatePauseState();
-                if (!isLookingForGroupOpen && !isPluginPausedDueToManualPFOpen)
-                {
-                    notificationSentForCurrentListing = false;
-                }
+                tempComment = string.Empty;
+                Log.Debug("[CustomRecruitButton] Both PF comment and config description are blank, sending empty description.");
             }
-        }
-else if (type == AddonEvent.PreFinalize)
-{
-    Log.Debug($"[PF PREFINALIZE {PartyFinderAddonName}] Start. isOpeningPfProg: {isOpeningPfProgrammatically}, isCleaningUp: {isCleaningUpProgrammaticCheck}, isPausedManualBefore: {isPluginPausedDueToManualPFOpen}");
-    isLookingForGroupOpen = false;
-    Log.Debug($"[PF ADDON] PartyFinder main window state changed. IsOpen: {isLookingForGroupOpen}");
-    UpdatePauseState();
-    Log.Debug($"[PF PREFINALIZE {PartyFinderAddonName}] After UpdatePauseState. isPausedManualAfter: {isPluginPausedDueToManualPFOpen}");
-    if (isCleaningUpProgrammaticCheck)
-    {
-        Log.Debug($"[PF PREFINALIZE {PartyFinderAddonName}] Programmatic cleanup detected. Ignoring ResetListingState for this addon.");
-        if (currentPfCheckState == PfCheckState.Closing &&
-            !isLookingForGroupOpen && !isLookingForGroupDetailOpen && !isLookingForGroupConditionOpen)
-        {
-            Log.Debug($"[PF PREFINALIZE {PartyFinderAddonName}] All relevant PF windows confirmed closed during programmatic cleanup. Finalizing state.");
-            isCleaningUpProgrammaticCheck = false;
-            currentPfCheckState = PfCheckState.Idle;
-            lastPfCheck = DateTime.UtcNow;
-            Log.Debug("[PF CHECK] Global state set to Idle and lastPfCheck updated by " + PartyFinderAddonName);
-        }
-        else if (currentPfCheckState == PfCheckState.Closing)
-        {
-            Log.Debug($"[PF PREFINALIZE {PartyFinderAddonName}] Programmatic cleanup ongoing, other windows might still be open or state already Idle. LFG: {isLookingForGroupOpen}, Detail: {isLookingForGroupDetailOpen}, Cond: {isLookingForGroupConditionOpen}");
-        }
-    }
-    else
-    {
-        if (!isPluginPausedDueToManualPFOpen)
-        {
-            Log.Information("[PF STATE] Last manually opened PF window closed by user. Resetting full listing state.");
-            ResetListingState("User closed last manual PF window");
+            Log.Debug($"[CustomRecruitButton] Stored temp data: DutyId={tempDutyId}, Comment='{tempComment}', PwdState={tempPwdState}, Flags={tempFlags}");
         }
         else
         {
-            Log.Debug($"[PF PREFINALIZE {PartyFinderAddonName}] User closed one manual window, but another is still open.");
+            Log.Error("[CustomRecruitButton] Agent was null before reading StoredRecruitmentInfo.");
+            // Still proceed to fire callback, but temp data will be empty
         }
-    }
-}
-    }
 
-    private unsafe void OnPartyFinderDetailAddonLifecycleChange(AddonEvent type, AddonArgs args)
-    {
-        if (type == AddonEvent.PostSetup)
+        IntPtr addonPtr = GameGui.GetAddonByName(LfgCondAddon, 1);
+        if (addonPtr == IntPtr.Zero)
         {
-            if (isOpeningPfProgrammatically && currentPfCheckState == PfCheckState.WaitingForDetailPostSetup)
-            {
-                Log.Debug("[PF ADDON] PartyFinder detail window opened programmatically (PostSetup).");
-                
-                // Attempt to refresh the addon to get fresh data
-                var addonDetail = GameGui.GetAddonByName("LookingForGroupDetail", 1);
-                if (addonDetail != IntPtr.Zero)
-                {
-                    Log.Debug("[PF ADDON DETAIL] Attempting to refresh LookingForGroupDetail.");
-                    AtkStage.Instance()->RaptureAtkUnitManager->RefreshAddon((AtkUnitBase*)addonDetail, 0, null);
-                }
-                else
-                {
-                    Log.Warning("[PF ADDON DETAIL] Could not get LookingForGroupDetail to refresh.");
-                }
-
-                currentPfCheckState = PfCheckState.WaitingForData;
-                checkRetryCount = 0;
-                waitingForDataChange = true;
-                dataChangeCheckFrames = 0;
-                Log.Debug("[PF ADDON DETAIL] Transitioning to WaitingForData. Will poll for actual data change from snapshot.");
-            }
-            else
-            {
-                isLookingForGroupDetailOpen = true;
-                Log.Debug($"[PF ADDON] PartyFinder detail window state changed. IsOpen: {isLookingForGroupDetailOpen}");
-                UpdatePauseState();
-                if (!isLookingForGroupDetailOpen && !isPluginPausedDueToManualPFOpen)
-                {
-                    notificationSentForCurrentListing = false;
-                }
-            }
-        }
-else if (type == AddonEvent.PreFinalize)
-{
-    Log.Debug($"[PF PREFINALIZE {PartyFinderDetailAddonName}] Start. isOpeningPfProg: {isOpeningPfProgrammatically}, isCleaningUp: {isCleaningUpProgrammaticCheck}, isPausedManualBefore: {isPluginPausedDueToManualPFOpen}");
-    isLookingForGroupDetailOpen = false;
-    Log.Debug($"[PF ADDON] PartyFinder detail window state changed. IsOpen: {isLookingForGroupDetailOpen}");
-    UpdatePauseState();
-    Log.Debug($"[PF PREFINALIZE {PartyFinderDetailAddonName}] After UpdatePauseState. isPausedManualAfter: {isPluginPausedDueToManualPFOpen}");
-    if (isCleaningUpProgrammaticCheck)
-    {
-        Log.Debug($"[PF PREFINALIZE {PartyFinderDetailAddonName}] Programmatic cleanup detected. Ignoring ResetListingState for this addon.");
-        if (currentPfCheckState == PfCheckState.Closing &&
-            !isLookingForGroupOpen && !isLookingForGroupDetailOpen && !isLookingForGroupConditionOpen)
-        {
-            Log.Debug($"[PF PREFINALIZE {PartyFinderDetailAddonName}] All relevant PF windows confirmed closed during programmatic cleanup. Finalizing state.");
-            isCleaningUpProgrammaticCheck = false;
-            currentPfCheckState = PfCheckState.Idle;
-            lastPfCheck = DateTime.UtcNow;
-            Log.Debug("[PF CHECK] Global state set to Idle and lastPfCheck updated by " + PartyFinderDetailAddonName);
-        }
-        else if (currentPfCheckState == PfCheckState.Closing)
-        {
-            Log.Debug($"[PF PREFINALIZE {PartyFinderDetailAddonName}] Programmatic cleanup ongoing, other windows might still be open or state already Idle. LFG: {isLookingForGroupOpen}, Detail: {isLookingForGroupDetailOpen}, Cond: {isLookingForGroupConditionOpen}");
-        }
-    }
-    else
-    {
-        if (!isPluginPausedDueToManualPFOpen)
-        {
-            Log.Information("[PF STATE] Last manually opened PF detail window closed by user. Resetting full listing state.");
-            ResetListingState("User closed last manual PF detail window");
-        }
-        else
-        {
-            Log.Debug($"[PF PREFINALIZE {PartyFinderDetailAddonName}] User closed one manual detail window, but another is still open.");
-        }
-    }
-}
-    }
-
-    private void OnPartyFinderConditionAddonLifecycleChange(AddonEvent type, AddonArgs args)
-    {
-        if (type == AddonEvent.PostSetup)
-        {
-            if (isOpeningPfProgrammatically)
-            {
-                Log.Debug("[PF ADDON] PartyFinder condition window opened programmatically. Ignoring for pause state.");
-            }
-            else
-            {
-                isLookingForGroupConditionOpen = true;
-                Log.Debug($"[PF ADDON] PartyFinder condition window state changed. IsOpen: {isLookingForGroupConditionOpen}");
-                UpdatePauseState();
-                if (!isLookingForGroupConditionOpen && !isPluginPausedDueToManualPFOpen)
-                {
-                    notificationSentForCurrentListing = false;
-                }
-            }
-        }
-else if (type == AddonEvent.PreFinalize)
-{
-    Log.Debug($"[PF PREFINALIZE {PartyFinderConditionAddonName}] Start. isOpeningPfProg: {isOpeningPfProgrammatically}, isCleaningUp: {isCleaningUpProgrammaticCheck}, isPausedManualBefore: {isPluginPausedDueToManualPFOpen}");
-    isLookingForGroupConditionOpen = false;
-    Log.Debug($"[PF ADDON] PartyFinder condition window state changed. IsOpen: {isLookingForGroupConditionOpen}");
-    UpdatePauseState();
-    Log.Debug($"[PF PREFINALIZE {PartyFinderConditionAddonName}] After UpdatePauseState. isPausedManualAfter: {isPluginPausedDueToManualPFOpen}");
-    if (isCleaningUpProgrammaticCheck)
-    {
-        Log.Debug($"[PF PREFINALIZE {PartyFinderConditionAddonName}] Programmatic cleanup detected. Ignoring ResetListingState for this addon.");
-        if (currentPfCheckState == PfCheckState.Closing &&
-            !isLookingForGroupOpen && !isLookingForGroupDetailOpen && !isLookingForGroupConditionOpen)
-        {
-            Log.Debug($"[PF PREFINALIZE {PartyFinderConditionAddonName}] All relevant PF windows confirmed closed during programmatic cleanup. Finalizing state.");
-            isCleaningUpProgrammaticCheck = false;
-            currentPfCheckState = PfCheckState.Idle;
-            lastPfCheck = DateTime.UtcNow;
-            Log.Debug("[PF CHECK] Global state set to Idle and lastPfCheck updated by " + PartyFinderConditionAddonName);
-        }
-        else if (currentPfCheckState == PfCheckState.Closing)
-        {
-            Log.Debug($"[PF PREFINALIZE {PartyFinderConditionAddonName}] Programmatic cleanup ongoing, other windows might still be open or state already Idle. LFG: {isLookingForGroupOpen}, Detail: {isLookingForGroupDetailOpen}, Cond: {isLookingForGroupConditionOpen}");
-        }
-    }
-    else
-    {
-        if (!isPluginPausedDueToManualPFOpen)
-        {
-            Log.Information("[PF STATE] Last manually opened PF condition window closed by user. Resetting full listing state.");
-            ResetListingState("User closed last manual PF condition window");
-        }
-        else
-        {
-            Log.Debug($"[PF PREFINALIZE {PartyFinderConditionAddonName}] User closed one manual condition window, but another is still open.");
-        }
-    }
-}
-    }
-
-    private void UpdatePauseState()
-    {
-        bool previouslyPaused = isPluginPausedDueToManualPFOpen;
-        isPluginPausedDueToManualPFOpen = isLookingForGroupOpen || isLookingForGroupDetailOpen || isLookingForGroupConditionOpen;
-
-        if (isPluginPausedDueToManualPFOpen && !previouslyPaused)
-        {
-            Log.Debug($"[PF PAUSE] Plugin PAUSED. Main: {isLookingForGroupOpen}, Detail: {isLookingForGroupDetailOpen}, Condition: {isLookingForGroupConditionOpen}");
-        }
-        else if (!isPluginPausedDueToManualPFOpen && previouslyPaused)
-        {
-            Log.Debug($"[PF PAUSE] Plugin RESUMED. Main: {isLookingForGroupOpen}, Detail: {isLookingForGroupDetailOpen}, Condition: {isLookingForGroupConditionOpen}");
-            notificationSentForCurrentListing = false;
-        }
-    }
-
-    private unsafe void OnFrameworkUpdate(IFramework framework)
-    {
-        if (ClientState.LocalPlayer == null || ClientState.LocalContentId == 0)
+            Log.Error("[CustomRecruitButton] LookingForGroupCondition addon not found when trying to fire native click.");
             return;
+        }
+        var unitBase = (AtkUnitBase*)addonPtr;
+        AtkResNode* originalButtonNode = unitBase->GetNodeById(111);
 
-        if (isPluginPausedDueToManualPFOpen)
+        if (originalButtonNode == null)
         {
-            if (currentPfCheckState != PfCheckState.Idle)
-            {
-                Log.Debug("[PF CHECK] User opened PF window, cancelling background check.");
-                CancelPfCheck();
-            }
+            Log.Error("[CustomRecruitButton] Original Recruit Members button (Node 111) not found.");
             return;
         }
 
-        switch (currentPfCheckState)
+        // Fire the native callback to create the listing and close the window
+        AtkValue arg;
+        arg.Type = FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int;
+        arg.Int = 0; // Confirmed to work for this action
+        unitBase->FireCallback(1, &arg);
+        Log.Debug("[CustomRecruitButton] Fired native callback for PF creation.");
+
+        recruitClicked = true;
+
+        // Programmatically close the window to mimic native behavior
+        unitBase->Close(true);
+        Log.Debug("[CustomRecruitButton] Programmatically closed LookingForGroupCondition window.");
+
+        // Hide the original button to prevent double interaction if window doesn't close instantly
+        originalButtonNode->NodeFlags &= ~NodeFlags.Visible;
+        Log.Debug("[CustomRecruitButton] Original native button hidden after programmatic click.");
+    }
+
+    // Draw custom ImGui button to replace the native Recruit Members button
+    private unsafe void DrawCustomRecruitButton()
+    {
+        if (!condWindowOpen)
+            return;
+
+        IntPtr addonPtr = GameGui.GetAddonByName(LfgCondAddon, 1);
+        if (addonPtr == IntPtr.Zero)
+            return;
+
+        var unitBase = (AtkUnitBase*)addonPtr;
+        AtkResNode* originalButtonNode = unitBase->GetNodeById(111);
+        if (originalButtonNode == null)
+            return;
+
+        // Calculate screen position and size for ImGui button, including node's own scale
+        float buttonScreenX = unitBase->X + (originalButtonNode->X * unitBase->Scale);
+        float buttonScreenY = unitBase->Y + (originalButtonNode->Y * unitBase->Scale);
+        float buttonWidth = originalButtonNode->Width * unitBase->Scale * originalButtonNode->ScaleX;
+        float buttonHeight = originalButtonNode->Height * unitBase->Scale * originalButtonNode->ScaleY;
+
+        // Remove ImGui window padding and make button fill the window
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, System.Numerics.Vector2.Zero);
+        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new System.Numerics.Vector2(4, 2));
+        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, System.Numerics.Vector2.Zero);
+
+        var windowFlags = ImGuiWindowFlags.NoDecoration |
+                          ImGuiWindowFlags.NoScrollWithMouse |
+                          ImGuiWindowFlags.NoBackground |
+                          ImGuiWindowFlags.NoSavedSettings |
+                          ImGuiWindowFlags.NoFocusOnAppearing |
+                          ImGuiWindowFlags.NoNav |
+                          ImGuiWindowFlags.NoMove;
+
+        ImGui.SetNextWindowPos(new System.Numerics.Vector2(buttonScreenX, buttonScreenY));
+        ImGui.SetNextWindowSize(new System.Numerics.Vector2(buttonWidth, buttonHeight));
+
+        ImGui.Begin("CustomRecruitButtonWindow", windowFlags);
+        if (ImGui.Button("Recruit Members##Custom", ImGui.GetContentRegionAvail()))
         {
-            case PfCheckState.Idle:
-                if ((DateTime.UtcNow - lastPfCheck) >= PfCheckInterval)
-                {
-                    Log.Debug("[PF CHECK] Starting background check.");
-                    var agentLfg = AgentLookingForGroup.Instance();
-                    if (agentLfg == null)
-                    {
-                        Log.Warning("[PF CHECK] Agent not found.");
-                        return;
-                    }
-                    isOpeningPfProgrammatically = true;
-                    agentLfg->Show();
-                    Log.Debug("[PF CHECK] Agent->Show() called. Waiting for AddonLifecycle PostSetup event.");
-                    currentPfCheckState = PfCheckState.WaitingForMainPostSetup;
-                }
-                break;
-
-            case PfCheckState.WaitingForMainPostSetup:
-                // Do nothing here; wait for AddonLifecycle event to transition state.
-                break;
-
-            case PfCheckState.WaitingForNode:
-                var addonPtr = GameGui.GetAddonByName(PartyFinderAddonName, 1);
-                if (addonPtr == IntPtr.Zero)
-                {
-                    checkRetryCount++;
-                    Log.Debug($"[PF CHECK] Waiting for addon... Retry {checkRetryCount}/{MAX_CHECK_RETRIES}");
-                    if (checkRetryCount > MAX_CHECK_RETRIES) CancelPfCheck("Addon never appeared");
-                    return;
-                }
-
-                var unitBase = (AtkUnitBase*)addonPtr;
-                var node46 = unitBase->GetNodeById(46);
-                if (node46 != null && node46->IsVisible())
-                {
-                    var componentNode46 = (AtkComponentNode*)node46;
-                    AtkTextNode* targetTextNode = null;
-                    var buttonComponent = componentNode46->Component;
-                    var atkComponentButton = (AtkComponentButton*)buttonComponent;
-                    if (atkComponentButton != null)
-                    {
-                        var uldManager = &atkComponentButton->UldManager;
-                        if (uldManager->LoadedState == AtkLoadState.Loaded)
-                        {
-                            var foundNode = uldManager->SearchNodeById(2);
-                            if (foundNode != null && foundNode->Type == NodeType.Text)
-                            {
-                                targetTextNode = (AtkTextNode*)foundNode;
-                                Log.Debug($"[PF CHECK] Found child Text Node with ID 2 via Component UldManager.");
-                            }
-                            else
-                            {
-                                Log.Debug($"[PF CHECK] Child Text Node 2 not found in Component UldManager (ID: 2, Type: Text). FoundNode Type: {(foundNode != null ? foundNode->Type : NodeType.Res)}");
-                            }
-                        }
-                        else
-                        {
-                            Log.Debug($"[PF CHECK] Component UldManager not loaded yet (State: {uldManager->LoadedState}). Retrying.");
-                        }
-                    }
-                    if (targetTextNode != null)
-                    {
-                        string nodeText = targetTextNode->NodeText.ToString();
-                        Log.Debug($"[PF CHECK] Child Text Node 2 text: '{nodeText}'");
-                        bool uiIndicatesActive = nodeText.Contains("Criteria");
-                        if (uiIndicatesActive)
-                        {
-                            Log.Debug("[PF CHECK] Child Text Node 2 indicates active PF. Clicking Node 46...");
-                            AtkValue arg;
-                            arg.Type = FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int;
-                            arg.Int = 14;
-                            unitBase->FireCallback(1, &arg);
-                            Log.Debug("[PF CHECK] Clicked Node 46 (Callback 14). Waiting for PartyFinderDetail PostSetup event.");
-                            currentPfCheckState = PfCheckState.WaitingForDetailPostSetup;
-                            checkRetryCount = 0;
-                        }
-                        else
-                        {
-                            Log.Debug("[PF CHECK] Child Text Node 2 indicates INACTIVE PF. Cleaning up.");
-                            if (playerHasActivePFListing) ResetListingState("PF Check found inactive text node 2");
-                            CancelPfCheck();
-                        }
-                    }
-                    else
-                    {
-                        checkRetryCount++;
-                        Log.Debug($"[PF CHECK] Waiting for Child Text Node 2 in Component UldManager... Retry {checkRetryCount}/{MAX_CHECK_RETRIES}");
-                        if (checkRetryCount > MAX_CHECK_RETRIES) CancelPfCheck("Child Text Node 2 (Component Uld) timeout");
-                    }
-                }
-                else
-                {
-                    checkRetryCount++;
-                    Log.Debug($"[PF CHECK] Waiting for Node 46 visibility... Retry {checkRetryCount}/{MAX_CHECK_RETRIES}");
-                    if (checkRetryCount > MAX_CHECK_RETRIES) CancelPfCheck("Node 46 timeout");
-                }
-                break;
-
-            case PfCheckState.WaitingForDetailPostSetup:
-                // No polling here; OnPartyFinderDetailAddonLifecycleChange will handle the transition.
-                break;
-
-            case PfCheckState.WaitingForData:
-                if (!waitingForDataChange) // This case should only be active if we are waiting for data change
-                {
-                    // This might happen if something went wrong and we entered this state without setting the flag
-                    // or if CancelPfCheck was called and reset waitingForDataChange, but OnFrameworkUpdate ran again for this state.
-                    Log.Warning("[PF CHECK WD] Entered WaitingForData but not actively waiting for data change. Resetting to Idle or handling legacy.");
-                    // Attempt legacy check once as a fallback, then cancel.
-                    var agentLfgLegacy = AgentLookingForGroup.Instance();
-                    if (agentLfgLegacy != null) {
-                        var localContentIdLegacy = ClientState.LocalContentId;
-                        bool isOurListingLegacy = agentLfgLegacy->LastViewedListing.LeaderContentId == localContentIdLegacy && localContentIdLegacy != 0;
-                        uint currentListingIdLegacy = agentLfgLegacy->LastViewedListing.ListingId;
-                        if (currentListingIdLegacy != 0 && isOurListingLegacy) {
-                            Log.Debug($"[PF CHECK WD] (Legacy Fallback) Processing LastViewed match: DutyId={agentLfgLegacy->LastViewedListing.DutyId}");
-                            ProcessListingDataFromLastViewed(agentLfgLegacy);
-                        }
-                    }
-                    CancelPfCheck("WaitingForData unexpected entry");
-                    return; // Important to exit to prevent further processing in this state for this frame
-                }
-
-                dataChangeCheckFrames++;
-                var agentLfgDataCurrent = AgentLookingForGroup.Instance();
-
-                if (agentLfgDataCurrent == null)
-                {
-                    Log.Warning("[PF CHECK WD] Agent disappeared while waiting for data change.");
-                    CancelPfCheck("Agent disappeared in WaitingForData poll");
-                    waitingForDataChange = false;
-                    return;
-                }
-
-                var currentLocalContentId = ClientState.LocalContentId;
-                bool currentIsOurListing = agentLfgDataCurrent->LastViewedListing.LeaderContentId == currentLocalContentId && currentLocalContentId != 0;
-                uint currentListingIdNow = agentLfgDataCurrent->LastViewedListing.ListingId;
-                uint currentDutyIdNow = agentLfgDataCurrent->LastViewedListing.DutyId;
-                int currentCommentHashCodeNow = agentLfgDataCurrent->LastViewedListing.CommentString.ToString().GetHashCode();
-
-                bool actualDataHasChanged = (currentListingIdNow != snapshotListingId ||
-                                           currentDutyIdNow != snapshotDutyId ||
-                                           currentCommentHashCodeNow != snapshotCommentHashCode);
-                
-                Log.Debug($"[PF CHECK WD] Poll frame {dataChangeCheckFrames}. OurListing: {currentIsOurListing}. SnapLID: {snapshotListingId}, CurLID: {currentListingIdNow}. SnapDID: {snapshotDutyId}, CurDID: {currentDutyIdNow}. SnapCHash: {snapshotCommentHashCode}, CurCHash: {currentCommentHashCodeNow}. Changed: {actualDataHasChanged}");
-
-                if (currentIsOurListing && ((snapshotListingId == 0 && currentListingIdNow != 0) || actualDataHasChanged))
-                {
-                    Log.Debug($"[PF CHECK WD] Data changed/updated from snapshot. Processing.");
-                    ProcessListingDataFromLastViewed(agentLfgDataCurrent);
-                    CancelPfCheck("Data changed/updated from snapshot");
-                    waitingForDataChange = false;
-                }
-                else if (dataChangeCheckFrames > MAX_DATA_CHANGE_FRAMES)
-                {
-                    Log.Warning($"[PF CHECK WD] Timed out waiting for data to change from snapshot after {dataChangeCheckFrames} frames.");
-                    if (currentIsOurListing) // If it's still our listing, even if unchanged from snapshot
-                    {
-                        Log.Debug("[PF CHECK WD] Data matches snapshot after timeout, or was initially our listing. Processing current data.");
-                        ProcessListingDataFromLastViewed(agentLfgDataCurrent);
-                    }
-                    else if (snapshotListingId == 0 && currentListingIdNow == 0) // Started with no listing, ended with no listing
-                    {
-                        Log.Debug("[PF CHECK WD] Snapshot and current listing ID are both 0 after timeout. No active listing.");
-                        if (playerHasActivePFListing) ResetListingState("PF Check found inactive after timeout (LID 0)");
-                    }
-                    CancelPfCheck("Data change poll timeout");
-                    waitingForDataChange = false;
-                }
-                // If no conditions met, continue polling on the next OnFrameworkUpdate tick.
-                break;
-
-            case PfCheckState.Closing:
-                var agentLfgClose = AgentLookingForGroup.Instance();
-                if (agentLfgClose != null) agentLfgClose->Hide();
-                Log.Debug("[PF CHECK] Agent->Hide() called.");
-                currentPfCheckState = PfCheckState.Idle;
-                lastPfCheck = DateTime.UtcNow;
-                isOpeningPfProgrammatically = false;
-                Log.Debug("[PF CHECK] Cleared programmatic open flag.");
-                break;
+            HandleCustomRecruitButtonClick();
         }
+        ImGui.End();
+
+        ImGui.PopStyleVar(3);
     }
 
-    private unsafe void CancelPfCheck(string reason = "Normal cleanup")
+    private unsafe void OnCondWindow(AddonEvent ev, AddonArgs args)
     {
-        Log.Debug($"[PF CHECK] Cancelling check ({reason}). Setting state to Closing.");
-        isCleaningUpProgrammaticCheck = true; // Signal that the upcoming PreFinalize events are due to us
-        currentPfCheckState = PfCheckState.Closing;
-        isOpeningPfProgrammatically = false;
-        waitingForDataChange = false; // Reset this flag whenever a check is cancelled
-        dataChangeCheckFrames = 0;    // And its counter
-
-        var agentLfgClose = AgentLookingForGroup.Instance();
-        if (agentLfgClose != null) agentLfgClose->Hide();
-        Log.Debug("[PF CHECK] Agent->Hide() called during cancel.");
-        // Do NOT set currentPfCheckState = Idle or lastPfCheck here; let PreFinalize handle it
-        Log.Debug("[PF CHECK] Programmatic cleanup flag set. Waiting for PreFinalize to finalize state.");
-    }
-
-    private unsafe void ProcessListingDataFromLastViewed(AgentLookingForGroup* agentLfg)
-    {
-        uint dutyId = agentLfg->LastViewedListing.DutyId;
-        uint listingId = agentLfg->LastViewedListing.ListingId;
-        string commentString = agentLfg->LastViewedListing.CommentString;
-
-        Log.Debug($"[PROCESS DATA] Entry. Current DutyId: {dutyId}, ListingId: {listingId}, Comment: '{commentString}'.");
-        Log.Debug($"[PROCESS DATA] State BEFORE notify check: hasActiveListing={playerHasActivePFListing}, lastDutyId={lastNotifiedDutyId}, lastCommentHash='{lastNotifiedCommentHash}', sentForCurrent={notificationSentForCurrentListing}");
-
-        string currentDescription = !string.IsNullOrWhiteSpace(Configuration.Description)
-            ? Configuration.Description
-            : (!string.IsNullOrWhiteSpace(commentString) ? commentString : string.Empty);
-
-        string currentCommentHash = currentDescription ?? string.Empty;
-
-        if (!playerHasActivePFListing ||
-            dutyId != lastNotifiedDutyId ||
-            currentCommentHash != lastNotifiedCommentHash ||
-            !notificationSentForCurrentListing)
+        var addonPtr = args.Addon;
+        if (ev == AddonEvent.PostSetup)
         {
-            string reason = "";
-            if (!playerHasActivePFListing) reason += "No active listing. ";
-            if (dutyId != lastNotifiedDutyId) reason += $"DutyId changed ({lastNotifiedDutyId} -> {dutyId}). ";
-            if (currentCommentHash != lastNotifiedCommentHash) reason += "Comment changed. ";
-            if (!notificationSentForCurrentListing) reason += "Notification not yet sent for this listing. ";
-            Log.Debug($"[PROCESS DATA] Notify condition MET. Reason: {reason.Trim()}");
+            Log.Debug($"[PF COND WINDOW] PostSetup for {LfgCondAddon}.");
+            condWindowOpen = true;
 
-            string dutyName = "";
-            var dutySheet = DataManager.GetExcelSheet<ContentFinderCondition>();
-            if (dutySheet != null)
+            // Hide the original button
+            var unitBase = (AtkUnitBase*)addonPtr;
+            AtkResNode* originalButtonNode = unitBase->GetNodeById(111);
+            if (originalButtonNode != null)
             {
-                var entry = dutySheet.GetRow(dutyId);
-                if (entry.RowId == dutyId) dutyName = entry.Name.ToString();
+                originalButtonNode->NodeFlags &= ~NodeFlags.Visible;
+                Log.Debug("[PF COND WINDOW] Original Recruit Members button (Node 111) hidden.");
             }
-            var passwordState = agentLfg->StoredRecruitmentInfo.Password;
-            var dutyFinderSettings = (byte)agentLfg->LastViewedListing.DutyFinderSettingFlags;
 
-            ProcessAndNotifyStoredListing(dutyName, currentDescription, passwordState, dutyFinderSettings);
-
-            lastNotifiedDutyId = dutyId;
-            lastNotifiedCommentHash = currentCommentHash;
-            playerHasActivePFListing = true;
-            notificationSentForCurrentListing = true;
-
-            Log.Debug($"[PROCESS DATA] State AFTER notify: lastDutyId={lastNotifiedDutyId}, lastCommentHash='{lastNotifiedCommentHash}', sentForCurrent={notificationSentForCurrentListing}, hasActiveListing={playerHasActivePFListing}");
+            // Register ImGui draw
+            PluginInterface.UiBuilder.Draw += DrawCustomRecruitButton;
+            return;
         }
-        else
+
+        // PreFinalize
+        Log.Debug($"[PF COND WINDOW] PreFinalize for {LfgCondAddon}. recruitClicked: {recruitClicked}");
+        condWindowOpen = false;
+
+        // Restore the original button
+        var unitBaseRestore = (AtkUnitBase*)addonPtr;
+        AtkResNode* originalButtonNodeRestore = unitBaseRestore->GetNodeById(111);
+        if (originalButtonNodeRestore != null)
         {
-            Log.Debug($"[PROCESS DATA] Condition NOT MET for notification.");
-            playerHasActivePFListing = true;
+            originalButtonNodeRestore->NodeFlags |= NodeFlags.Visible;
+            Log.Debug("[PF COND WINDOW] Original Recruit Members button (Node 111) restored.");
         }
+
+        // Unregister ImGui draw
+        PluginInterface.UiBuilder.Draw -= DrawCustomRecruitButton;
+
+        if (!recruitClicked)
+        {
+            Log.Debug("[PF COND WINDOW] PreFinalize: Recruit button was not clicked. Resetting recruitClicked and returning.");
+            return;
+        }
+
+        recruitClicked = false; // Reset immediately after checking
+
+        var agent = AgentLookingForGroup.Instance();
+        ulong currentOwnListingId = (agent != null) ? agent->OwnListingId : 0;
+        int tempCommentHash = tempComment.GetHashCode();
+
+        // Duplicate guard: check against last sent values
+        if ((currentOwnListingId != 0 && currentOwnListingId == lastListingId && tempDutyId == lastDutyId && tempCommentHash == lastCommentHash) ||
+            (currentOwnListingId == 0 && tempDutyId == lastDutyId && tempCommentHash == lastCommentHash && lastListingId != 0))
+        {
+            Log.Debug("[PF COND WINDOW] PreFinalize: Duplicate recruit click detected. Skipping send.");
+            return;
+        }
+
+        string dutyName = GetDutyName(tempDutyId);
+        if (string.IsNullOrEmpty(dutyName))
+        {
+            Log.Warning($"[PF COND WINDOW] PreFinalize: Could not get duty name for Duty ID {tempDutyId}. Using raw ID as fallback.");
+            dutyName = $"Duty ID {tempDutyId}";
+        }
+
+        Log.Debug($"[PF COND WINDOW] PreFinalize: Processing listing. DutyName: '{dutyName}', Comment: '{tempComment}', PwdState: {tempPwdState}, Flags: {tempFlags}");
+        ProcessAndNotifyStoredListing(dutyName, tempComment, tempPwdState, tempFlags);
+
+        lastDutyId = tempDutyId;
+        lastCommentHash = tempCommentHash;
+        if (currentOwnListingId != 0)
+            lastListingId = currentOwnListingId;
+        Log.Debug($"[PF COND WINDOW] PreFinalize: Updated last sent values. LastLID: {lastListingId}, LastDutyID: {lastDutyId}, LastCommentHash: {lastCommentHash}");
     }
 
-    private void ResetListingState(string reason)
+    private string GetDutyName(ushort dutyId)
     {
-        if (playerHasActivePFListing || notificationSentForCurrentListing)
+        var dutySheet = DataManager.GetExcelSheet<Lumina.Excel.Sheets.ContentFinderCondition>();
+        if (dutySheet == null)
         {
-            Log.Information($"[PF STATE] Resetting listing state ({reason}).");
-            playerHasActivePFListing = false;
-            notificationSentForCurrentListing = false;
-            lastNotifiedDutyId = 0;
-            lastNotifiedCommentHash = string.Empty;
+            Log.Warning($"[GetDutyName] Could not get ContentFinderCondition sheet.");
+            return string.Empty;
+        }
+        var entry = dutySheet.GetRow(dutyId);
+        // Lumina's GetRow returns a struct, not null. Check RowId.
+        if (entry.RowId != dutyId)
+        {
+            Log.Warning($"[GetDutyName] Could not find name for duty ID: {dutyId}");
+            return string.Empty;
+        }
+        string name = entry.Name.ToString();
+        if (!string.IsNullOrEmpty(name) && char.IsLower(name[0]))
+        {
+            // Capitalize the first letter if it's lowercase
+            char[] chars = name.ToCharArray();
+            chars[0] = char.ToUpper(chars[0]);
+            name = new string(chars);
+        }
+
+        // Special case: Move (Savage) to the end for Bahamut turns
+        // e.g. "The Second Coil of Bahamut (Savage) - Turn 2" -> "The Second Coil of Bahamut - Turn 2 (Savage)"
+        if (name.Contains("(Savage)") && name.Contains("Turn"))
+        {
+            // Find "(Savage)" and "Turn"
+            int savageIdx = name.IndexOf("(Savage)");
+            int turnIdx = name.IndexOf("Turn");
+            if (savageIdx > 0 && turnIdx > savageIdx)
+            {
+                // Remove " (Savage)" from its current position
+                string withoutSavage = name.Remove(savageIdx - 1, 9); // Remove space + "(Savage)"
+                // Insert " (Savage)" at the end
+                name = withoutSavage + " (Savage)";
+            }
+        }
+
+        return name;
+    }
+
+    // Helper to extract the comment string from the internal fixed-size array using reflection and correct pinning
+    private unsafe string GetRecruitmentComment(ref AgentLookingForGroup.RecruitmentSub r)
+    {
+        var field = typeof(AgentLookingForGroup.RecruitmentSub).GetField("_comment", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        if (field == null)
+        {
+            Log.Error("[GetRecruitmentComment] Could not find _comment field via reflection.");
+            return string.Empty;
+        }
+        object commentStruct = field.GetValue(r)!;
+        var handle = System.Runtime.InteropServices.GCHandle.Alloc(commentStruct, System.Runtime.InteropServices.GCHandleType.Pinned);
+        try
+        {
+            byte* ptr = (byte*)handle.AddrOfPinnedObject();
+            int len = 0;
+            while (len < 192 && ptr[len] != 0)
+                len++;
+            return len == 0 ? string.Empty : Encoding.UTF8.GetString(ptr, len);
+        }
+        finally
+        {
+            handle.Free();
         }
     }
 
-    // ... rest of the code (ProcessAndNotifyStoredListing, SendPartyFinderNotificationAsync) unchanged ...
+    // --- Unchanged notification/HTTP/config logic below ---
+
     private void ProcessAndNotifyStoredListing(string dutyName, string description, ushort gamePasswordState, byte dutyFinderSettings)
     {
         Log.Debug($"[DEBUG PROCESS] ProcessAndNotifyStoredListing called. Duty: '{dutyName}', Desc: '{description}', PassState: {gamePasswordState}, Settings: {dutyFinderSettings}");
@@ -637,35 +368,34 @@ else if (type == AddonEvent.PreFinalize)
             return;
         }
 
-        bool minIlvlFlagSet = (dutyFinderSettings & 0x2) != 0;
-        bool silenceEchoFlagSet = (dutyFinderSettings & 0x4) != 0;
-        bool passesMinIlvlFlag = !Configuration.FilterRequireMinIlvl || minIlvlFlagSet;
-        bool passesSilenceEchoFlag = !Configuration.FilterRequireSilenceEcho || silenceEchoFlagSet;
-
-        Log.Debug($"[DEBUG PROCESS] Filter results: MinIlvlOK={passesMinIlvlFlag}, SilenceEchoOK={passesSilenceEchoFlag}");
-
-        if (!passesMinIlvlFlag || !passesSilenceEchoFlag)
-        {
-            Log.Debug("[DEBUG PROCESS] Listing does not meet filter criteria. Notification skipped.");
-            return;
-        }
-
         var playerName = ClientState.LocalPlayer?.Name.TextValue ?? "Unknown Player";
-        var partyFinderPassword = Configuration.PartyFinderPassword ?? string.Empty;
+        string finalPasswordToSend = string.Empty;
 
-        bool isPasswordProtectedInGame = gamePasswordState != 0 && gamePasswordState != 10000;
+        // Correct password logic: only send config password if UI password is enabled and config is set
+        bool isUiPasswordProtectionEnabled = (gamePasswordState != 10000);
+        string configPassword = Configuration.PartyFinderPassword?.Trim('\0') ?? string.Empty;
 
-        if (isPasswordProtectedInGame && string.IsNullOrEmpty(partyFinderPassword))
+        if (isUiPasswordProtectionEnabled)
         {
-            Log.Debug("[DEBUG PROCESS] Listing is password protected in-game, but no password is set in plugin config. Sending without password in payload.");
+            if (!string.IsNullOrEmpty(configPassword)) // Changed from IsNullOrWhiteSpace to IsNullOrEmpty after trimming nulls
+            {
+                finalPasswordToSend = configPassword; // Use the trimmed version
+                Log.Debug("[DEBUG PROCESS] PF has password enabled in UI. Using password from plugin config: '{0}'", finalPasswordToSend);
+            }
+            else
+            {
+                finalPasswordToSend = string.Empty;
+                Log.Debug("[DEBUG PROCESS] PF has password enabled in UI, but plugin config password is blank. Sending blank password.");
+            }
         }
-        else if (!isPasswordProtectedInGame && !string.IsNullOrEmpty(partyFinderPassword))
+        else
         {
-            Log.Debug("[DEBUG PROCESS] Listing is NOT password protected in-game, but a password IS set in plugin config. Sending with configured password.");
+            finalPasswordToSend = string.Empty;
+            Log.Debug("[DEBUG PROCESS] PF has password disabled in UI. Sending blank password.");
         }
 
-        Log.Debug($"[DEBUG PROCESS] Preparing to send notification. Player: {playerName}, Duty: {dutyName}, Desc: {description}");
-        _ = SendPartyFinderNotificationAsync(playerName, dutyName, description, partyFinderPassword, Configuration.TargetChannelId, Configuration.RoleId, Configuration.BotApiEndpoint);
+        Log.Debug($"[DEBUG PROCESS] Preparing to send notification. Player: {playerName}, Duty: {dutyName}, Desc: {description}, PasswordToSend: '{finalPasswordToSend}'");
+        _ = SendPartyFinderNotificationAsync(playerName, dutyName, description, finalPasswordToSend, Configuration.TargetChannelId, Configuration.RoleId, Configuration.BotApiEndpoint);
     }
 
     private async Task SendPartyFinderNotificationAsync(string playerName, string dutyName, string description, string partyFinderPassword, ulong channelId, ulong roleId, string apiEndpoint)

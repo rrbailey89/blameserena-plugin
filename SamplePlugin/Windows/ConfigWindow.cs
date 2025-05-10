@@ -128,17 +128,15 @@ public class ConfigWindow : Window, IDisposable
         }
 
         // Party Finder Password
-        var pfPassword = configuration.PartyFinderPassword ?? string.Empty;
-        var pfPasswordBuffer = new byte[64];
-        var pfPasswordBytes = System.Text.Encoding.UTF8.GetBytes(pfPassword);
-        Array.Copy(pfPasswordBytes, pfPasswordBuffer, Math.Min(pfPasswordBytes.Length, pfPasswordBuffer.Length - 1));
-        if (ImGui.InputText("Party Finder Password", pfPasswordBuffer, (uint)pfPasswordBuffer.Length))
+        string pfPassword = configuration.PartyFinderPassword ?? string.Empty;
+        if (ImGui.InputText("Party Finder Password", ref pfPassword, 64))
         {
-            var newPfPassword = System.Text.Encoding.UTF8.GetString(pfPasswordBuffer).TrimEnd('\0');
-            if (newPfPassword != configuration.PartyFinderPassword)
+            if (pfPassword != configuration.PartyFinderPassword)
             {
-                configuration.PartyFinderPassword = newPfPassword;
+                configuration.PartyFinderPassword = pfPassword;
                 configuration.Save();
+                // Optional: Add debug log
+                // Dalamud.Plugin.PluginLog.Debug($"[ConfigWindow] PartyFinderPassword updated to: '{(string.IsNullOrEmpty(pfPassword) ? "<empty>" : pfPassword)}'");
             }
         }
 
