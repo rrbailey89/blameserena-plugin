@@ -1,12 +1,12 @@
 {
   "Author": "Serena Eclipse",
   "Name": "BlameSerena",
-  "Punchline": "A plugin to blame Serena for everything.",
-  "Description": "A plugin that helps you blame Serena for everything. Use /blameserena to open the main window.",
+  "Punchline": "A plugin that currently sends party finder listings to a Discord channel.",
+  "Description": "A plugin that currently sends party finder listings to a Discord channel. Use /blameserena to open the main window.",
   "ApplicableVersion": "any",
   "Tags": [
-    "sample",
-    "plugin",
-    "goats"
+    "serena",
+    "blame",
+    "blameserena"
   ]
 }
