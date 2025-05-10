@@ -15,15 +15,15 @@ jobs:
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
-        dotnet-version: '7.0.x'
+        dotnet-version: '8.0.x'
 
-    - name: Download Dalamud dev files
+    - name: Clone dalamud-distrib
       run: |
-        $ErrorActionPreference = 'Stop'
+        git clone --depth 1 https://github.com/goatcorp/dalamud-distrib.git
         $dalamudDir = "$env:APPDATA\XIVLauncher\addon\Hooks\dev"
         mkdir $dalamudDir -Force
-        Invoke-WebRequest -Uri "https://goatcorp.github.io/Dalamud-distrib/latest.zip" -OutFile "latest.zip"
-        Expand-Archive -Path "latest.zip" -DestinationPath $dalamudDir -Force
+        Copy-Item -Path dalamud-distrib/latest.zip -Destination latest.zip
+        Expand-Archive -Path latest.zip -DestinationPath $dalamudDir -Force
 
     - name: Build
       run: dotnet build BlameSerena/BlameSerena.csproj -c Release
