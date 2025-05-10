@@ -9,6 +9,8 @@ public class ConfigWindow : Window, IDisposable
 {
     private Configuration configuration;
     private bool isCollapsed = false;
+    private readonly Plugin plugin;
+    private readonly string logoPath;
 
     // We give this window a constant ID using ###
     // This allows for labels being dynamic, like "{FPS Counter}fps###XYZ counter window",
@@ -22,21 +24,16 @@ public class ConfigWindow : Window, IDisposable
         SizeCondition = ImGuiCond.FirstUseEver;
 
         configuration = plugin.Configuration;
+        this.plugin = plugin;
+        this.logoPath = System.IO.Path.Combine(BlameSerena.Plugin.PluginInterface.AssemblyLocation.DirectoryName!, "logo.png");
     }
 
     public void Dispose() { }
 
     public override void PreDraw()
     {
-        // Flags must be added or removed before Draw() is being called, or they won't apply
-        if (configuration.IsConfigWindowMovable)
-        {
-            Flags &= ~ImGuiWindowFlags.NoMove;
-        }
-        else
-        {
-            Flags |= ImGuiWindowFlags.NoMove;
-        }
+        // Always allow the config window to be movable
+        Flags &= ~ImGuiWindowFlags.NoMove;
 
         // Handle double-click on title bar
         if (ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left) && ImGui.IsWindowHovered(ImGuiHoveredFlags.RootWindow))
@@ -58,21 +55,33 @@ public class ConfigWindow : Window, IDisposable
         if (isCollapsed)
             return;
 
-        // can't ref a property, so use a local copy
-        var configValue = configuration.SomePropertyToBeSavedAndWithADefault;
-        if (ImGui.Checkbox("Random Config Bool", ref configValue))
+        var logo = BlameSerena.Plugin.TextureProvider.GetFromFile(logoPath).GetWrapOrDefault();
+        if (logo != null)
         {
-            configuration.SomePropertyToBeSavedAndWithADefault = configValue;
-            // can save immediately on change, if you don't want to provide a "Save and Close" button
-            configuration.Save();
+            // Save current cursor position
+            var oldCursorPos = ImGui.GetCursorPos();
+            float windowWidth = ImGui.GetWindowWidth();
+            float imageWidth = logo.Width;
+            float rightAlign = windowWidth - imageWidth - 10.0f; // 10px padding from right
+            ImGui.SetCursorPos(new Vector2(rightAlign > 0 ? rightAlign : 0, oldCursorPos.Y));
+            ImGui.Image(logo.ImGuiHandle, new Vector2(logo.Width, logo.Height));
+            // Restore cursor position so config options start at the top left
+            ImGui.SetCursorPos(oldCursorPos);
+        }
+        else
+        {
+            var oldCursorPos = ImGui.GetCursorPos();
+            float windowWidth = ImGui.GetWindowWidth();
+            float textWidth = ImGui.CalcTextSize("Image not found.").X;
+            float rightAlign = windowWidth - textWidth - 10.0f;
+            ImGui.SetCursorPos(new Vector2(rightAlign > 0 ? rightAlign : 0, oldCursorPos.Y));
+            ImGui.TextUnformatted("Image not found.");
+            ImGui.SetCursorPos(oldCursorPos);
         }
 
-        var movable = configuration.IsConfigWindowMovable;
-        if (ImGui.Checkbox("Movable Config Window", ref movable))
-        {
-            configuration.IsConfigWindowMovable = movable;
-            configuration.Save();
-        }
+        // can't ref a property, so use a local copy
+        var configValue = configuration.SomePropertyToBeSavedAndWithADefault;
+        // Removed: Random Config Bool
 
         // --- Plugin Notification Settings ---
         var enableNotifications = configuration.EnableNotifications;
