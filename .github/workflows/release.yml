@@ -30,8 +30,8 @@ jobs:
 
     - name: Create images directory and move logo
       run: |
-        mkdir -p BlameSerena/bin/Release/BlameSerena/images
-        copy Data/logo.png BlameSerena/bin/Release/BlameSerena/images/logo.png
+        mkdir -p BlameSerena/bin/Release/images
+        copy Data/logo.png BlameSerena/bin/Release/images/logo.png
 
     - name: Zip plugin
       run: |
