@@ -1,0 +1,19 @@
+name: Update download counter
+on:
+  workflow_dispatch:
+  schedule: [{cron: "0 */6 * * *"}]
+jobs:
+  count:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update DownloadCount in repo.json
+        run: |
+          TOTAL=$(curl -s https://api.github.com/repos/${{ github.repository }}/releases \
+                  | jq '[.[].assets[].download_count] | add')
+          jq --argjson n "$TOTAL" '.[0].DownloadCount=$n' BlameSerena/repo.json > tmp.json
+          mv tmp.json BlameSerena/repo.json
+      - name: Commit & push
+        uses: EndBug/add-and-commit@v9
+        with:
+          message: "chore: update DownloadCount → $TOTAL" 
