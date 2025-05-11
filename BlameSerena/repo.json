@@ -7,13 +7,18 @@
     "AssemblyVersion": "0.0.0.1",
     "RepoUrl": "https://github.com/rrbailey89/dalamud-plugin-template",
     "ApplicableVersion": "any",
-    "Tags": ["party finder", "discord", "notification"],
+    "Tags": [
+      "party finder",
+      "discord",
+      "notification"
+    ],
     "DalamudApiLevel": 12,
     "DownloadLinkInstall": "https://github.com/rrbailey89/dalamud-plugin-template/releases/latest/download/BlameSerena.zip",
     "DownloadLinkTesting": "",
     "DownloadLinkUpdate": "",
     "IconUrl": "https://raw.githubusercontent.com/rrbailey89/dalamud-plugin-template/master/Data/logo.png",
     "Punchline": "Send party finder listings to Discord.",
-    "Changelog": "Initial release."
+    "Changelog": "Initial release.",
+    "DownloadCount": 3
   }
-] 
+]
