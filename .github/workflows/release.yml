@@ -35,7 +35,7 @@ jobs:
 
     - name: Zip plugin
       run: |
-        powershell -Command "Compress-Archive -Path BlameSerena/bin/Release/BlameSerena.dll,BlameSerena/bin/Release/images/logo.png -DestinationPath BlameSerena.zip"
+        powershell -Command "Compress-Archive -Path BlameSerena/bin/Release/BlameSerena.dll,BlameSerena/bin/Release/images -DestinationPath BlameSerena.zip"
 
     - name: Create Release
       id: create_release
