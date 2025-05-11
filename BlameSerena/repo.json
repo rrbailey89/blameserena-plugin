@@ -7,7 +7,7 @@
     "Tags": ["party finder", "discord", "notification"],
     "InternalName": "BlameSerena",
     "RepoUrl": "https://github.com/rrbailey89/dalamud-plugin-template",
-    "DownloadCount": 0,
+    "DownloadCount": 3,
     "DownloadLinkInstall": "https://github.com/rrbailey89/dalamud-plugin-template/releases/latest/download/BlameSerena.zip",
     "DownloadLinkUpdate": "https://github.com/rrbailey89/dalamud-plugin-template/releases/latest/download/BlameSerena.zip",
     "AssemblyVersion": "0.0.0.1",
@@ -17,4 +17,4 @@
     "DownloadLinkTesting": "",
     "IconUrl": "https://raw.githubusercontent.com/rrbailey89/dalamud-plugin-template/master/Data/logo.png"
   }
-] 
+]
