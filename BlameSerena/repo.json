@@ -10,15 +10,15 @@
       "notification"
     ],
     "InternalName": "BlameSerena",
-    "RepoUrl": "https://github.com/rrbailey89/dalamud-plugin-template",
+    "RepoUrl": "https://github.com/rrbailey89/blameserena-plugin",
     "DownloadCount": 6,
-    "DownloadLinkInstall": "https://github.com/rrbailey89/dalamud-plugin-template/releases/latest/download/BlameSerena.zip",
-    "DownloadLinkUpdate": "https://github.com/rrbailey89/dalamud-plugin-template/releases/latest/download/BlameSerena.zip",
+    "DownloadLinkInstall": "https://github.com/rrbailey89/blameserena-plugin/releases/latest/download/BlameSerena.zip",
+    "DownloadLinkUpdate": "https://github.com/rrbailey89/blameserena-plugin/releases/latest/download/BlameSerena.zip",
     "AssemblyVersion": "0.0.0.1",
     "ApplicableVersion": "any",
     "DalamudApiLevel": 12,
     "Changelog": "Initial release.",
     "DownloadLinkTesting": "",
-    "IconUrl": "https://raw.githubusercontent.com/rrbailey89/dalamud-plugin-template/master/Data/logo.png"
+    "IconUrl": "https://raw.githubusercontent.com/rrbailey89/blameserena-plugin/master/Data/logo.png"
   }
 ]
