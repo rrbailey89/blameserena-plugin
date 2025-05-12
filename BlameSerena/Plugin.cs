@@ -61,6 +61,10 @@ public sealed class Plugin : IDalamudPlugin
     private ushort tempPwdState = 0;
     private byte tempFlags = 0;
 
+    // State for confirmation modal
+    private bool showNonCombatConfirm = false;
+    private bool confirmRecruitClick = false;
+
     public Plugin()
     {
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
@@ -180,6 +184,9 @@ public sealed class Plugin : IDalamudPlugin
         if (!condWindowOpen)
             return;
 
+        var player = ClientState.LocalPlayer;
+        bool isNonCombat = player != null && player.ClassJob.IsValid && !IsDoWorDoM(player.ClassJob.RowId);
+
         IntPtr addonPtr = GameGui.GetAddonByName(LfgCondAddon, 1);
         if (addonPtr == IntPtr.Zero)
             return;
@@ -214,11 +221,41 @@ public sealed class Plugin : IDalamudPlugin
         ImGui.Begin("CustomRecruitButtonWindow", windowFlags);
         if (ImGui.Button("Recruit Members##Custom", ImGui.GetContentRegionAvail()))
         {
-            HandleCustomRecruitButtonClick();
+            if (isNonCombat)
+            {
+                showNonCombatConfirm = true;
+            }
+            else
+            {
+                HandleCustomRecruitButtonClick();
+            }
         }
         ImGui.End();
 
         ImGui.PopStyleVar(3);
+
+        // Confirmation modal for non-combat jobs
+        if (showNonCombatConfirm)
+        {
+            ImGui.OpenPopup("NonCombatConfirmModal");
+            showNonCombatConfirm = false;
+        }
+        bool open = true;
+        if (ImGui.BeginPopupModal("NonCombatConfirmModal", ref open, ImGuiWindowFlags.AlwaysAutoResize))
+        {
+            ImGui.TextUnformatted("You are not on a combat job (DoW/DoM).\nAre you sure you want to list this Party Finder?");
+            if (ImGui.Button("Yes, List Anyway", new System.Numerics.Vector2(150, 0)))
+            {
+                HandleCustomRecruitButtonClick();
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.SameLine();
+            if (ImGui.Button("Cancel", new System.Numerics.Vector2(100, 0)))
+            {
+                ImGui.CloseCurrentPopup();
+            }
+            ImGui.EndPopup();
+        }
     }
 
     private unsafe void OnCondWindow(AddonEvent ev, AddonArgs args)
@@ -430,5 +467,89 @@ public sealed class Plugin : IDalamudPlugin
         catch (HttpRequestException ex) { Log.Error(ex, $"[HTTP SEND] HTTP Request Exception to {apiEndpoint}."); }
         catch (TaskCanceledException ex) { Log.Error(ex, $"[HTTP SEND] Task Canceled (Timeout?) to {apiEndpoint}."); }
         catch (Exception ex) { Log.Error(ex, $"[HTTP SEND] General Exception to {apiEndpoint}."); }
+    }
+
+    // Helper: Check if a job is DoW or DoM (combat job)
+    private bool IsDoWorDoM(uint classJobId)
+    {
+        // DoW: 1-10 (GLA, PGL, MRD, LNC, ARC, ROG, PLD, MNK, WAR, DRG)
+        //       21-30 (BRD, MCH, DNC, NIN, SAM, RPR, VPR, GNB, DRK, SGE)
+        // DoM: 11-20 (CNJ, THM, WHM, BLM, ACN, SMN, SCH, AST, RDM, BLU)
+        //       31-40 (SGE, PICT, etc. future jobs)
+        // This list is up to Dawntrail (2024). Adjust as needed for new jobs.
+        // DoH: 8x, DoL: 16x
+        // See: https://ffxiv.consolegameswiki.com/wiki/Class
+        //
+        // DoW: 1-10, 21-30, 32-38, 39-40, 45 (Viper)
+        // DoM: 11-20, 24, 25, 27, 28, 35, 36, 43, 44 (Pictomancer, Blue Mage, etc.)
+        //
+        // For simplicity, use known ranges and explicit IDs for new jobs.
+        //
+        // Tanks: 19 (PLD), 21 (WAR), 32 (DRK), 37 (GNB)
+        // Melee DPS: 20 (MNK), 22 (DRG), 30 (NIN), 34 (SAM), 39 (RPR), 45 (VPR)
+        // Physical Ranged: 23 (BRD), 31 (MCH), 38 (DNC)
+        // Magic Ranged: 24 (BLM), 25 (SMN), 27 (RDM), 35 (BLU), 44 (PICT)
+        // Healers: 26 (WHM), 28 (SCH), 33 (AST), 40 (SGE)
+        //
+        // DoH: 8x, DoL: 16x
+        //
+        // We'll use a switch for clarity.
+        switch (classJobId)
+        {
+            // DoW
+            case 1: // GLA
+            case 2: // PGL
+            case 3: // MRD
+            case 4: // LNC
+            case 5: // ARC
+            case 6: // CNJ (DoM)
+            case 7: // THM (DoM)
+            case 8: // CRP (DoH)
+            case 9: // BSM (DoH)
+            case 10: // ARM (DoH)
+            case 11: // GSM (DoH)
+            case 12: // LTW (DoH)
+            case 13: // WVR (DoH)
+            case 14: // ALC (DoH)
+            case 15: // CUL (DoH)
+            case 16: // MIN (DoL)
+            case 17: // BTN (DoL)
+            case 18: // FSH (DoL)
+            case 19: // PLD
+            case 20: // MNK
+            case 21: // WAR
+            case 22: // DRG
+            case 23: // BRD
+            case 24: // WHM (DoM)
+            case 25: // BLM (DoM)
+            case 26: // ACN (DoM)
+            case 27: // SMN (DoM)
+            case 28: // SCH (DoM)
+            case 29: // ROG
+            case 30: // NIN
+            case 31: // MCH
+            case 32: // DRK
+            case 33: // AST (DoM)
+            case 34: // SAM
+            case 35: // RDM (DoM)
+            case 36: // BLU (DoM)
+            case 37: // GNB
+            case 38: // DNC
+            case 39: // RPR
+            case 40: // SGE (DoM)
+            case 44: // Pictomancer (DoM)
+            case 45: // Viper
+                // Only exclude DoH (8-15, 31, 41, 42, 43) and DoL (16-18, 24, 25, 26, 27, 28, 29, 30, 46, 47, 48)
+                // But for safety, let's use a whitelist:
+                return (classJobId >= 1 && classJobId <= 5) || // GLA, PGL, MRD, LNC, ARC
+                       (classJobId == 19 || classJobId == 20 || classJobId == 21 || classJobId == 22 || classJobId == 23 ||
+                        classJobId == 29 || classJobId == 30 || classJobId == 31 || classJobId == 32 || classJobId == 34 ||
+                        classJobId == 37 || classJobId == 38 || classJobId == 39 || classJobId == 45) // DoW
+                    || (classJobId == 6 || classJobId == 7 || classJobId == 24 || classJobId == 25 || classJobId == 26 ||
+                        classJobId == 27 || classJobId == 28 || classJobId == 33 || classJobId == 35 || classJobId == 36 ||
+                        classJobId == 40 || classJobId == 44); // DoM
+            default:
+                return false;
+        }
     }
 }
