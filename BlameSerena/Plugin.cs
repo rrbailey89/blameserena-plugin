@@ -65,6 +65,15 @@ public sealed class Plugin : IDalamudPlugin
     private bool showNonCombatConfirm = false;
     private bool confirmRecruitClick = false;
 
+    public static string LogoPath {
+        get {
+            var imagesLogoPath = Path.Combine(PluginInterface.AssemblyLocation.DirectoryName!, "images", "logo.png");
+            if (File.Exists(imagesLogoPath))
+                return imagesLogoPath;
+            return Path.Combine(PluginInterface.AssemblyLocation.DirectoryName!, "logo.png");
+        }
+    }
+
     public Plugin()
     {
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
@@ -72,8 +81,7 @@ public sealed class Plugin : IDalamudPlugin
         ConfigWindow = new ConfigWindow(this);
         WindowSystem.AddWindow(ConfigWindow);
 
-        var logoPath = Path.Combine(PluginInterface.AssemblyLocation.DirectoryName!, "logo.png");
-        MainWindow = new MainWindow(this, logoPath);
+        MainWindow = new MainWindow(this, LogoPath);
         WindowSystem.AddWindow(MainWindow);
 
         CommandManager.AddHandler(MainWindowCommandName, new CommandInfo(OnBlameSerenaMainCommand)

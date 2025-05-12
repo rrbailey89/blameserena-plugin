@@ -25,12 +25,7 @@ public class ConfigWindow : Window, IDisposable
 
         configuration = plugin.Configuration;
         this.plugin = plugin;
-        // Try to load logo from /images if it exists, otherwise fallback to old path
-        string imagesLogoPath = System.IO.Path.Combine(BlameSerena.Plugin.PluginInterface.AssemblyLocation.DirectoryName!, "images", "logo.png");
-        if (System.IO.File.Exists(imagesLogoPath))
-            this.logoPath = imagesLogoPath;
-        else
-            this.logoPath = System.IO.Path.Combine(BlameSerena.Plugin.PluginInterface.AssemblyLocation.DirectoryName!, "logo.png");
+        this.logoPath = BlameSerena.Plugin.LogoPath;
     }
 
     public void Dispose() { }
