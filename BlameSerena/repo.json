@@ -14,7 +14,7 @@
     "DownloadCount": 9,
     "DownloadLinkInstall": "https://github.com/rrbailey89/blameserena-plugin/releases/latest/download/BlameSerena.zip",
     "DownloadLinkUpdate": "https://github.com/rrbailey89/blameserena-plugin/releases/latest/download/BlameSerena.zip",
-    "AssemblyVersion": "0.0.0.2",
+    "AssemblyVersion": "0.0.0.3",
     "ApplicableVersion": "any",
     "DalamudApiLevel": 12,
     "Changelog": "Initial release.",
