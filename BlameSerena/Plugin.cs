@@ -141,7 +141,7 @@ public sealed class Plugin : IDalamudPlugin
         {
             var r = agent->StoredRecruitmentInfo;
             tempDutyId = r.SelectedDutyId;
-            tempComment = GetRecruitmentComment(ref r);
+            tempComment = r.CommentString;
             tempPwdState = r.Password;
             tempFlags = (byte)r.DutyFinderSettingFlags;
 
@@ -382,31 +382,6 @@ public sealed class Plugin : IDalamudPlugin
         }
 
         return name;
-    }
-
-    // Helper to extract the comment string from the internal fixed-size array using reflection and correct pinning
-    private unsafe string GetRecruitmentComment(ref AgentLookingForGroup.RecruitmentSub r)
-    {
-        var field = typeof(AgentLookingForGroup.RecruitmentSub).GetField("_comment", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        if (field == null)
-        {
-            Log.Error("[GetRecruitmentComment] Could not find _comment field via reflection.");
-            return string.Empty;
-        }
-        object commentStruct = field.GetValue(r)!;
-        var handle = System.Runtime.InteropServices.GCHandle.Alloc(commentStruct, System.Runtime.InteropServices.GCHandleType.Pinned);
-        try
-        {
-            byte* ptr = (byte*)handle.AddrOfPinnedObject();
-            int len = 0;
-            while (len < 192 && ptr[len] != 0)
-                len++;
-            return len == 0 ? string.Empty : Encoding.UTF8.GetString(ptr, len);
-        }
-        finally
-        {
-            handle.Free();
-        }
     }
 
     // --- Unchanged notification/HTTP/config logic below ---
