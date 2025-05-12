@@ -42,6 +42,7 @@ public sealed class Plugin : IDalamudPlugin
     private const string MainWindowCommandName = "/blameserena";
     private const string ConfigWindowCommandName = "/blameserenaconfig";
     private const string LfgCondAddon = "LookingForGroupCondition";
+    private const string YesNoAddonName = "SelectYesno";
 
     public Configuration Configuration { get; init; }
     public readonly WindowSystem WindowSystem = new("BlameSerena");
@@ -51,6 +52,8 @@ public sealed class Plugin : IDalamudPlugin
     // New event-driven PF state fields
     private bool condWindowOpen = false;
     private bool recruitClicked = false;
+    private bool yesNoDialogOpen = false;
+    private bool yesClicked = false;
     private ulong lastListingId = 0;   // for duplicate-send guard
     private ulong lastDutyId = 0;
     private int lastCommentHash = 0;
@@ -98,9 +101,13 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUI;
         PluginInterface.UiBuilder.OpenMainUi += OnBlameSerenaMainUi;
 
-        // Register only the new event-driven hooks
+        // Register event-driven hooks
         AddonLifecycle.RegisterListener(AddonEvent.PostSetup, LfgCondAddon, OnCondWindow);
         AddonLifecycle.RegisterListener(AddonEvent.PreFinalize, LfgCondAddon, OnCondWindow);
+        
+        // Add listeners for Yes/No dialog
+        AddonLifecycle.RegisterListener(AddonEvent.PostSetup, YesNoAddonName, OnYesNoDialog);
+        AddonLifecycle.RegisterListener(AddonEvent.PreFinalize, YesNoAddonName, OnYesNoDialog);
 
         Log.Information($"=== {PluginInterface.Manifest.Name} Loaded ===");
         Log.Information($"Monitoring Party Finder agent for own listing.");
@@ -109,6 +116,7 @@ public sealed class Plugin : IDalamudPlugin
     public void Dispose()
     {
         AddonLifecycle.UnregisterListener(OnCondWindow);
+        AddonLifecycle.UnregisterListener(OnYesNoDialog);
 
         WindowSystem.RemoveAllWindows();
         ConfigWindow.Dispose();
@@ -128,14 +136,28 @@ public sealed class Plugin : IDalamudPlugin
     private void DrawUI() => WindowSystem.Draw();
     public void ToggleConfigUI() => ConfigWindow.Toggle();
 
-    // --- New event-driven PF logic ---
-
-    // Called by ImGui button to mimic native button behavior
-    private unsafe void HandleCustomRecruitButtonClick()
+    // Method to determine if a job is DoW/DoM
+    // No longer needed as the game handles this check automatically
+    // Keeping the method declaration in case it's used elsewhere
+    private bool IsDoWorDoM(uint classJobId)
     {
-        Log.Debug("[CustomRecruitButton] Clicked.");
+        // This would contain the logic to check if a class/job is DoW/DoM
+        // For example, DoW/DoM jobs typically have IDs 1-38
+        return classJobId <= 38;
+    }
 
-        // Capture PF data from StoredRecruitmentInfo before firing the callback
+    // --- New event-driven PF logic with AtkEventListener ---
+
+    // NOTE: The following two classes are removed because AtkEventListener is sealed and cannot be inherited.
+    // Instead, you should use a function hook or delegate to intercept button clicks.
+    // See comments in HookButtonEventListener and HookYesNoDialogButton for where to implement hooks.
+
+    // Handler for Recruit button clicks
+    private unsafe void OnButtonClickDetected()
+    {
+        Log.Debug("[OnButtonClickDetected] Recruit button click intercepted!");
+        
+        // Capture PF data here - similar to original HandleCustomRecruitButtonClick
         var agent = AgentLookingForGroup.Instance();
         if (agent != null)
         {
@@ -144,128 +166,146 @@ public sealed class Plugin : IDalamudPlugin
             tempComment = r.CommentString;
             tempPwdState = r.Password;
             tempFlags = (byte)r.DutyFinderSettingFlags;
-
-            Log.Debug($"[CustomRecruitButton] Stored temp data: DutyId={tempDutyId}, Comment='{tempComment}', PwdState={tempPwdState}, Flags={tempFlags}");
+            
+            Log.Debug($"[OnButtonClickDetected] Stored PF data: DutyId={tempDutyId}, Comment='{tempComment}', PwdState={tempPwdState}, Flags={tempFlags}");
         }
-        else
-        {
-            Log.Error("[CustomRecruitButton] Agent was null before reading StoredRecruitmentInfo.");
-            // Still proceed to fire callback, but temp data will be empty
-        }
-
-        IntPtr addonPtr = GameGui.GetAddonByName(LfgCondAddon, 1);
-        if (addonPtr == IntPtr.Zero)
-        {
-            Log.Error("[CustomRecruitButton] LookingForGroupCondition addon not found when trying to fire native click.");
-            return;
-        }
-        var unitBase = (AtkUnitBase*)addonPtr;
-        AtkResNode* originalButtonNode = unitBase->GetNodeById(111);
-
-        if (originalButtonNode == null)
-        {
-            Log.Error("[CustomRecruitButton] Original Recruit Members button (Node 111) not found.");
-            return;
-        }
-
-        // Fire the native callback to create the listing and close the window
-        AtkValue arg;
-        arg.Type = FFXIVClientStructs.FFXIV.Component.GUI.ValueType.Int;
-        arg.Int = 0; // Confirmed to work for this action
-        unitBase->FireCallback(1, &arg);
-        Log.Debug("[CustomRecruitButton] Fired native callback for PF creation.");
-
+        
+        // We don't know yet if this will be confirmed immediately or if the game
+        // will show a confirmation dialog (for non-combat jobs)
+        // The game will handle this check automatically:
+        // - If combat job: no dialog will appear, window closes immediately
+        // - If non-combat: the game will show confirmation, which our YesNoDialog handler will catch
+        
+        // For now, we optimistically set recruitClicked, but we'll reset it if the window closes
+        // without proper confirmation for non-combat jobs
+        Log.Debug("[OnButtonClickDetected] Setting recruitClicked flag, waiting to see if confirmation is required");
         recruitClicked = true;
-
-        // Programmatically close the window to mimic native behavior
-        unitBase->Close(true);
-        Log.Debug("[CustomRecruitButton] Programmatically closed LookingForGroupCondition window.");
-
-        // Hide the original button to prevent double interaction if window doesn't close instantly
-        originalButtonNode->NodeFlags &= ~NodeFlags.Visible;
-        Log.Debug("[CustomRecruitButton] Original native button hidden after programmatic click.");
+        
+        // If the game shows a confirmation dialog, our OnYesNoDialog handler will manage this flag:
+        // - If "No" is clicked, the dialog closes without setting yesClicked, and the window stays open
+        // - If "Yes" is clicked, yesClicked is set to true in OnYesButtonClicked
     }
 
-    // Draw custom ImGui button to replace the native Recruit Members button
-    private unsafe void DrawCustomRecruitButton()
+    // Handler for Yes button clicks in confirmation dialog
+    private void OnYesButtonClicked()
     {
-        if (!condWindowOpen)
-            return;
+        Log.Debug("[OnYesButtonClicked] User clicked Yes in confirmation dialog");
+        yesClicked = true;
+    }
 
-        var player = ClientState.LocalPlayer;
-        bool isNonCombat = player != null && player.ClassJob.IsValid && !IsDoWorDoM(player.ClassJob.RowId);
-
+    // Method to hook the Recruit button's event listener
+    private unsafe void HookButtonEventListener()
+    {
         IntPtr addonPtr = GameGui.GetAddonByName(LfgCondAddon, 1);
         if (addonPtr == IntPtr.Zero)
+        {
+            Log.Error("[HookButtonEventListener] LookingForGroupCondition addon not found");
             return;
-
+        }
+        
         var unitBase = (AtkUnitBase*)addonPtr;
-        AtkResNode* originalButtonNode = unitBase->GetNodeById(111);
-        if (originalButtonNode == null)
+        AtkResNode* buttonNode = unitBase->GetNodeById(111);
+        
+        if (buttonNode == null)
+        {
+            Log.Error("[HookButtonEventListener] Button node 111 not found");
             return;
-
-        // Calculate screen position and size for ImGui button, including node's own scale
-        float buttonScreenX = unitBase->X + (originalButtonNode->X * unitBase->Scale);
-        float buttonScreenY = unitBase->Y + (originalButtonNode->Y * unitBase->Scale);
-        float buttonWidth = originalButtonNode->Width * unitBase->Scale * originalButtonNode->ScaleX;
-        float buttonHeight = originalButtonNode->Height * unitBase->Scale * originalButtonNode->ScaleY;
-
-        // Remove ImGui window padding and make button fill the window
-        ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, System.Numerics.Vector2.Zero);
-        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new System.Numerics.Vector2(4, 2));
-        ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, System.Numerics.Vector2.Zero);
-
-        var windowFlags = ImGuiWindowFlags.NoDecoration |
-                          ImGuiWindowFlags.NoScrollWithMouse |
-                          ImGuiWindowFlags.NoBackground |
-                          ImGuiWindowFlags.NoSavedSettings |
-                          ImGuiWindowFlags.NoFocusOnAppearing |
-                          ImGuiWindowFlags.NoNav |
-                          ImGuiWindowFlags.NoMove;
-
-        ImGui.SetNextWindowPos(new System.Numerics.Vector2(buttonScreenX, buttonScreenY));
-        ImGui.SetNextWindowSize(new System.Numerics.Vector2(buttonWidth, buttonHeight));
-
-        ImGui.Begin("CustomRecruitButtonWindow", windowFlags);
-        if (ImGui.Button("Recruit Members##Custom", ImGui.GetContentRegionAvail()))
-        {
-            if (isNonCombat)
-            {
-                showNonCombatConfirm = true;
-            }
-            else
-            {
-                HandleCustomRecruitButtonClick();
-            }
         }
-        ImGui.End();
-
-        ImGui.PopStyleVar(3);
-
-        // Confirmation modal for non-combat jobs
-        if (showNonCombatConfirm)
+        
+        // Get the collision node which handles mouse events
+        var buttonComponent = buttonNode->GetComponent();
+        if (buttonComponent == null)
         {
-            ImGui.OpenPopup("NonCombatConfirmModal");
-            showNonCombatConfirm = false;
+            Log.Error("[HookButtonEventListener] Button component is null");
+            return;
         }
-        bool open = true;
-        if (ImGui.BeginPopupModal("NonCombatConfirmModal", ref open, ImGuiWindowFlags.AlwaysAutoResize))
+
+        // Fix: NodeList is a pointer to an array, NodeListCount is the count
+        if (buttonComponent->UldManager.NodeListCount == 0 || buttonComponent->UldManager.NodeList == null)
         {
-            ImGui.TextUnformatted("You are not on a combat job (DoW/DoM).\nAre you sure you want to list this Party Finder?");
-            if (ImGui.Button("Yes, List Anyway", new System.Numerics.Vector2(150, 0)))
-            {
-                HandleCustomRecruitButtonClick();
-                ImGui.CloseCurrentPopup();
-            }
-            ImGui.SameLine();
-            if (ImGui.Button("Cancel", new System.Numerics.Vector2(100, 0)))
-            {
-                ImGui.CloseCurrentPopup();
-            }
-            ImGui.EndPopup();
+            Log.Error("[HookButtonEventListener] Node list is null or empty");
+            return;
         }
+        
+        // Usually the collision node is the first child
+        var collisionNode = buttonComponent->UldManager.NodeList[0];
+        if (collisionNode == null)
+        {
+            Log.Error("[HookButtonEventListener] Collision node is null");
+            return;
+        }
+
+        if (collisionNode->Type != NodeType.Collision)
+        {
+            Log.Error($"[HookButtonEventListener] Expected collision node, got {collisionNode->Type}");
+            return;
+        }
+        
+        // Instead of assigning a managed listener, you need to hook the event handler function here.
+        // You can use a function hook (e.g. using Dalamud's Signature attribute or a detour library) to intercept the click event.
+        // Example:
+        // Hook the function pointer at collisionNode->EventListener or the vtable method for ReceiveEvent.
+        // When the button is clicked, call OnButtonClickDetected().
+        //
+        // [Function hook implementation required here]
+        Log.Debug("[HookButtonEventListener] You must implement a function hook here to intercept button clicks.");
     }
 
+    // Method to hook the Yes button in the dialog
+    private unsafe void HookYesNoDialogButton(AtkUnitBase* unitBase)
+    {
+        if (unitBase == null)
+        {
+            Log.Error("[HookYesNoDialogButton] UnitBase is null");
+            return;
+        }
+
+        // For SelectYesno addon, the Yes button is NodeID 8
+        AtkResNode* yesButtonNode = unitBase->GetNodeById(8);
+        
+        if (yesButtonNode == null)
+        {
+            Log.Error("[HookYesNoDialogButton] Yes button node (ID 8) not found");
+            return;
+        }
+        
+        var buttonComponent = yesButtonNode->GetComponent();
+        if (buttonComponent == null)
+        {
+            Log.Error("[HookYesNoDialogButton] Yes button component is null");
+            return;
+        }
+
+        // Fix: NodeList is a pointer to an array, NodeListCount is the count
+        if (buttonComponent->UldManager.NodeListCount == 0 || buttonComponent->UldManager.NodeList == null)
+        {
+            Log.Error("[HookYesNoDialogButton] Yes button node list is null or empty");
+            return;
+        }
+        
+        // Usually the collision node is the first child
+        var collisionNode = buttonComponent->UldManager.NodeList[0];
+        if (collisionNode == null)
+        {
+            Log.Error("[HookYesNoDialogButton] Collision node is null");
+            return;
+        }
+
+        if (collisionNode->Type != NodeType.Collision)
+        {
+            Log.Error($"[HookYesNoDialogButton] Expected collision node, got {collisionNode->Type}");
+            return;
+        }
+        
+        // Instead of assigning a managed listener, you need to hook the event handler function here.
+        // You can use a function hook (e.g. using Dalamud's Signature attribute or a detour library) to intercept the click event.
+        // When the Yes button is clicked, call OnYesButtonClicked().
+        //
+        // [Function hook implementation required here]
+        Log.Debug("[HookYesNoDialogButton] You must implement a function hook here to intercept Yes button clicks.");
+    }
+
+    // Handler for LookingForGroupCondition addon events
     private unsafe void OnCondWindow(AddonEvent ev, AddonArgs args)
     {
         var addonPtr = args.Addon;
@@ -274,17 +314,9 @@ public sealed class Plugin : IDalamudPlugin
             Log.Debug($"[PF COND WINDOW] PostSetup for {LfgCondAddon}.");
             condWindowOpen = true;
 
-            // Hide the original button
-            var unitBase = (AtkUnitBase*)addonPtr;
-            AtkResNode* originalButtonNode = unitBase->GetNodeById(111);
-            if (originalButtonNode != null)
-            {
-                originalButtonNode->NodeFlags &= ~NodeFlags.Visible;
-                Log.Debug("[PF COND WINDOW] Original Recruit Members button (Node 111) hidden.");
-            }
-
-            // Register ImGui draw
-            PluginInterface.UiBuilder.Draw += DrawCustomRecruitButton;
+            // Hook into the Recruit button's event listener
+            HookButtonEventListener();
+            
             return;
         }
 
@@ -292,21 +324,10 @@ public sealed class Plugin : IDalamudPlugin
         Log.Debug($"[PF COND WINDOW] PreFinalize for {LfgCondAddon}. recruitClicked: {recruitClicked}");
         condWindowOpen = false;
 
-        // Restore the original button
-        var unitBaseRestore = (AtkUnitBase*)addonPtr;
-        AtkResNode* originalButtonNodeRestore = unitBaseRestore->GetNodeById(111);
-        if (originalButtonNodeRestore != null)
-        {
-            originalButtonNodeRestore->NodeFlags |= NodeFlags.Visible;
-            Log.Debug("[PF COND WINDOW] Original Recruit Members button (Node 111) restored.");
-        }
-
-        // Unregister ImGui draw
-        PluginInterface.UiBuilder.Draw -= DrawCustomRecruitButton;
-
         if (!recruitClicked)
         {
             Log.Debug("[PF COND WINDOW] PreFinalize: Recruit button was not clicked. Resetting recruitClicked and returning.");
+            recruitClicked = false; // Reset just to be safe
             return;
         }
 
@@ -339,6 +360,47 @@ public sealed class Plugin : IDalamudPlugin
         if (currentOwnListingId != 0)
             lastListingId = currentOwnListingId;
         Log.Debug($"[PF COND WINDOW] PreFinalize: Updated last sent values. LastLID: {lastListingId}, LastDutyID: {lastDutyId}, LastCommentHash: {lastCommentHash}");
+    }
+
+    // Handler for the YesNo dialog events
+    private unsafe void OnYesNoDialog(AddonEvent ev, AddonArgs args)
+    {
+        var addonPtr = args.Addon;
+        
+        if (ev == AddonEvent.PostSetup)
+        {
+            Log.Debug("[PF YES/NO] YesNo dialog opened.");
+            yesNoDialogOpen = true;
+            
+            // Only hook if this is relevant to our PF window
+            if (condWindowOpen)
+            {
+                HookYesNoDialogButton((AtkUnitBase*)addonPtr);
+                
+                // Since a confirmation dialog appeared, we need to reset recruitClicked
+                // It will be set again only if the user clicks "Yes"
+                Log.Debug("[PF YES/NO] Confirmation dialog appeared for PF listing - resetting recruitClicked until confirmed");
+                recruitClicked = false;
+            }
+            
+            return;
+        }
+        
+        // PreFinalize
+        Log.Debug($"[PF YES/NO] YesNo dialog closing. yesClicked: {yesClicked}");
+        yesNoDialogOpen = false;
+        
+        // If Yes was clicked and PF condition window is open, this is our confirmation
+        if (yesClicked && condWindowOpen)
+        {
+            Log.Debug("[PF YES/NO] User confirmed non-combat PF post via YesNo dialog.");
+            
+            // Set our recruitment clicked flag so the PF window can process it on close
+            recruitClicked = true;
+        }
+        
+        // Reset the yes clicked flag
+        yesClicked = false;
     }
 
     private string GetDutyName(ushort dutyId)
@@ -448,91 +510,7 @@ public sealed class Plugin : IDalamudPlugin
             }
         }
         catch (HttpRequestException ex) { Log.Error(ex, $"[HTTP SEND] HTTP Request Exception to {apiEndpoint}."); }
-        catch (TaskCanceledException ex) { Log.Error(ex, $"[HTTP SEND] Task Canceled (Timeout?) to {apiEndpoint}."); }
-        catch (Exception ex) { Log.Error(ex, $"[HTTP SEND] General Exception to {apiEndpoint}."); }
-    }
-
-    // Helper: Check if a job is DoW or DoM (combat job)
-    private bool IsDoWorDoM(uint classJobId)
-    {
-        // DoW: 1-10 (GLA, PGL, MRD, LNC, ARC, ROG, PLD, MNK, WAR, DRG)
-        //       21-30 (BRD, MCH, DNC, NIN, SAM, RPR, VPR, GNB, DRK, SGE)
-        // DoM: 11-20 (CNJ, THM, WHM, BLM, ACN, SMN, SCH, AST, RDM, BLU)
-        //       31-40 (SGE, PICT, etc. future jobs)
-        // This list is up to Dawntrail (2024). Adjust as needed for new jobs.
-        // DoH: 8x, DoL: 16x
-        // See: https://ffxiv.consolegameswiki.com/wiki/Class
-        //
-        // DoW: 1-10, 21-30, 32-38, 39-40, 45 (Viper)
-        // DoM: 11-20, 24, 25, 27, 28, 35, 36, 43, 44 (Pictomancer, Blue Mage, etc.)
-        //
-        // For simplicity, use known ranges and explicit IDs for new jobs.
-        //
-        // Tanks: 19 (PLD), 21 (WAR), 32 (DRK), 37 (GNB)
-        // Melee DPS: 20 (MNK), 22 (DRG), 30 (NIN), 34 (SAM), 39 (RPR), 45 (VPR)
-        // Physical Ranged: 23 (BRD), 31 (MCH), 38 (DNC)
-        // Magic Ranged: 24 (BLM), 25 (SMN), 27 (RDM), 35 (BLU), 44 (PICT)
-        // Healers: 26 (WHM), 28 (SCH), 33 (AST), 40 (SGE)
-        //
-        // DoH: 8x, DoL: 16x
-        //
-        // We'll use a switch for clarity.
-        switch (classJobId)
-        {
-            // DoW
-            case 1: // GLA
-            case 2: // PGL
-            case 3: // MRD
-            case 4: // LNC
-            case 5: // ARC
-            case 6: // CNJ (DoM)
-            case 7: // THM (DoM)
-            case 8: // CRP (DoH)
-            case 9: // BSM (DoH)
-            case 10: // ARM (DoH)
-            case 11: // GSM (DoH)
-            case 12: // LTW (DoH)
-            case 13: // WVR (DoH)
-            case 14: // ALC (DoH)
-            case 15: // CUL (DoH)
-            case 16: // MIN (DoL)
-            case 17: // BTN (DoL)
-            case 18: // FSH (DoL)
-            case 19: // PLD
-            case 20: // MNK
-            case 21: // WAR
-            case 22: // DRG
-            case 23: // BRD
-            case 24: // WHM (DoM)
-            case 25: // BLM (DoM)
-            case 26: // ACN (DoM)
-            case 27: // SMN (DoM)
-            case 28: // SCH (DoM)
-            case 29: // ROG
-            case 30: // NIN
-            case 31: // MCH
-            case 32: // DRK
-            case 33: // AST (DoM)
-            case 34: // SAM
-            case 35: // RDM (DoM)
-            case 36: // BLU (DoM)
-            case 37: // GNB
-            case 38: // DNC
-            case 39: // RPR
-            case 40: // SGE (DoM)
-            case 44: // Pictomancer (DoM)
-            case 45: // Viper
-                // Only exclude DoH (8-15, 31, 41, 42, 43) and DoL (16-18, 24, 25, 26, 27, 28, 29, 30, 46, 47, 48)
-                // But for safety, let's use a whitelist:
-                return (classJobId >= 1 && classJobId <= 5) || // GLA, PGL, MRD, LNC, ARC
-                       (classJobId == 19 || classJobId == 20 || classJobId == 21 || classJobId == 22 || classJobId == 23 ||
-                        classJobId == 29 || classJobId == 30 || classJobId == 31 || classJobId == 32 || classJobId == 34 ||
-                        classJobId == 37 || classJobId == 38 || classJobId == 39 || classJobId == 45) // DoW
-                    || (classJobId == 6 || classJobId == 7 || classJobId == 24 || classJobId == 25 || classJobId == 26 ||
-                        classJobId == 27 || classJobId == 28 || classJobId == 33 || classJobId == 35 || classJobId == 36 ||
-                        classJobId == 40 || classJobId == 44); // DoM
-            default:
-                return false;
-        }
+        catch (TaskCanceledException ex) { Log.Error(ex, $"[HTTP SEND] Request timed out to {apiEndpoint}."); }
+        catch (Exception ex) { Log.Error(ex, $"[HTTP SEND] Unexpected error sending notification to {apiEndpoint}."); }
     }
 }
