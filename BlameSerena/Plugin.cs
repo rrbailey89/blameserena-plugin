@@ -223,9 +223,7 @@ public sealed class Plugin : IDalamudPlugin
         var btn = (AtkComponentButton*)node->GetComponent();
         if (btn == null) { Log.Error("Recruit button component not found"); return; }
 
-        // v-table slot 2 = ReceiveEvent (0 = dtor, 1 = ctor)
-        var recvPtr = *((nint*)*(nint*)btn + 2);
-
+        nint recvPtr = *((nint*)*(nint*)btn + 2);   // v-table slot 2 = ReceiveEvent
         recruitHook?.Disable();
         recruitHook = HookProvider.HookFromAddress<ReceiveEventDelegate>(recvPtr, RecruitDetour);
         recruitHook.Enable();
@@ -258,14 +256,12 @@ public sealed class Plugin : IDalamudPlugin
 
     // Detour bodies for button click hooks
     private unsafe void RecruitDetour(AtkEventListener* listener,
-        AtkEventType type, uint p3, void* p4, void* p5)
+        AtkEventType type, uint param, void* p4, void* p5)
     {
-        recruitHook!.Original(listener, type, p3, p4, p5);
+        recruitHook!.Original(listener, type, param, p4, p5);
 
-        if ((int)type == 0xB)
+        if (type == AtkEventType.MouseClick) // value 0xF
             OnButtonClickDetected();
-        else
-            Log.Debug($"[Hook] Recruit: Other event {type}");
     }
 
     private unsafe void YesDetour(AtkEventListener* listener,
