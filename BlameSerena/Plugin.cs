@@ -216,26 +216,53 @@ public sealed class Plugin : IDalamudPlugin
         if (addon == null) { Log.Error("LFGCond addon not found"); return; }
 
         var btnNode = addon->GetNodeById(111);
+        if (btnNode == null) { Log.Error("Recruit button node 111 not found"); return; }
+
+        // Find the first CollisionNode under this component
+        AtkResNode* collision = null;
         var comp = btnNode->GetComponent();
-        if (comp == null || comp->UldManager.NodeListCount == 0) return;
-        var collision = comp->UldManager.NodeList[0];
+        for (var i = 0; i < comp->UldManager.NodeListCount; i++)
+        {
+            var n = comp->UldManager.NodeList[i];
+            if (n->Type == NodeType.Collision)
+            {
+                collision = n;
+                break;
+            }
+        }
+        if (collision == null) { Log.Error("No collision node under button 111"); return; }
 
         recruitHook?.Disable();
         recruitHook = HookNodeClick(collision, RecruitDetour);
-        Log.Debug("Recruit-button hook enabled");
+        Log.Debug("Recruit-button hook enabled (collision node)");
+    }
+
+    // Helper to find the first Collision node under a component
+    private static unsafe AtkResNode* FirstCollisionNode(AtkComponentBase* comp)
+    {
+        for (int i = 0; i < comp->UldManager.NodeListCount; i++)
+        {
+            var n = comp->UldManager.NodeList[i];
+            if (n->Type == NodeType.Collision)
+                return n;
+        }
+        return null;
     }
 
     // Method to hook the Yes button in the dialog
     private unsafe void HookYesButton(AtkUnitBase* yesno)
     {
+        // Yes button is node 8 under the correct hierarchy, get its component and find the first collision node
         var yesNode = yesno->GetNodeById(8); // ID 8 = "Yes"
+        if (yesNode == null) { Log.Error("YesNo: Node 8 not found"); return; }
         var comp = yesNode->GetComponent();
-        if (comp == null || comp->UldManager.NodeListCount == 0) return;
-        var collision = comp->UldManager.NodeList[0];
+        if (comp == null) { Log.Error("YesNo: Component for node 8 not found"); return; }
+        var collision = FirstCollisionNode(comp);
+        if (collision == null) { Log.Error("YesNo: No collision node found under node 8"); return; }
 
         yesHook?.Disable();
         yesHook = HookNodeClick(collision, YesDetour);
-        Log.Debug("Yes-button hook enabled");
+        Log.Debug("Yes-button hook enabled (first collision node under node 8)");
     }
 
     // Utility to install a hook on a node
