@@ -215,68 +215,45 @@ public sealed class Plugin : IDalamudPlugin
         var addon = (AtkUnitBase*)GameGui.GetAddonByName(LfgCondAddon, 1);
         if (addon == null) { Log.Error("LFGCond addon not found"); return; }
 
-        var btnNode = addon->GetNodeById(111);
-        if (btnNode == null) { Log.Error("Recruit button node 111 not found"); return; }
+        // 111 is the Recruit button container
+        var node = addon->GetNodeById(111);
+        if (node == null) { Log.Error("Recruit button node 111 not found"); return; }
 
-        // Find the first CollisionNode under this component
-        AtkResNode* collision = null;
-        var comp = btnNode->GetComponent();
-        for (var i = 0; i < comp->UldManager.NodeListCount; i++)
-        {
-            var n = comp->UldManager.NodeList[i];
-            if (n->Type == NodeType.Collision)
-            {
-                collision = n;
-                break;
-            }
-        }
-        if (collision == null) { Log.Error("No collision node under button 111"); return; }
+        // The thing that actually receives the click ↓
+        var btn = (AtkComponentButton*)node->GetComponent();
+        if (btn == null) { Log.Error("Recruit button component not found"); return; }
+
+        // v-table slot 2 = ReceiveEvent (0 = dtor, 1 = ctor)
+        var recvPtr = *((nint*)*(nint*)btn + 2);
 
         recruitHook?.Disable();
-        recruitHook = HookNodeClick(collision, RecruitDetour);
-        Log.Debug("Recruit-button hook enabled (collision node)");
-    }
+        recruitHook = HookProvider.HookFromAddress<ReceiveEventDelegate>(recvPtr, RecruitDetour);
+        recruitHook.Enable();
 
-    // Helper to find the first Collision node under a component
-    private static unsafe AtkResNode* FirstCollisionNode(AtkComponentBase* comp)
-    {
-        for (int i = 0; i < comp->UldManager.NodeListCount; i++)
-        {
-            var n = comp->UldManager.NodeList[i];
-            if (n->Type == NodeType.Collision)
-                return n;
-        }
-        return null;
+        Log.Debug("Recruit-button hook enabled (component ReceiveEvent)");
     }
 
     // Method to hook the Yes button in the dialog
     private unsafe void HookYesButton(AtkUnitBase* yesno)
     {
-        // Yes button is node 8 under the correct hierarchy, get its component and find the first collision node
-        var yesNode = yesno->GetNodeById(8); // ID 8 = "Yes"
-        if (yesNode == null) { Log.Error("YesNo: Node 8 not found"); return; }
-        var comp = yesNode->GetComponent();
-        if (comp == null) { Log.Error("YesNo: Component for node 8 not found"); return; }
-        var collision = FirstCollisionNode(comp);
-        if (collision == null) { Log.Error("YesNo: No collision node found under node 8"); return; }
+        // container 8 is NOT clickable – drill down to 4
+        var cont8 = yesno->GetNodeById(8);
+        if (cont8 == null) { Log.Error("YesNo: Node 8 not found"); return; }
+
+        // Find child node with NodeId == 4
+        AtkResNode* coll4 = null;
+        for (var n = cont8->ChildNode; n != null; n = n->NextSiblingNode)
+            if (n->NodeId == 4) { coll4 = n; break; }
+        if (coll4 == null || coll4->Type != NodeType.Collision) { Log.Error("YesNo: Collision node 4 not found or not a collision node"); return; }
+
+        var listener = (AtkEventListener*)coll4;
+        var recvPtr  = *((nint*)*(nint*)listener + 2);
 
         yesHook?.Disable();
-        yesHook = HookNodeClick(collision, YesDetour);
-        Log.Debug("Yes-button hook enabled (first collision node under node 8)");
-    }
+        yesHook = HookProvider.HookFromAddress<ReceiveEventDelegate>(recvPtr, YesDetour);
+        yesHook.Enable();
 
-    // Utility to install a hook on a node
-    private unsafe Dalamud.Hooking.Hook<ReceiveEventDelegate> HookNodeClick(
-        AtkResNode* collisionNode,
-        ReceiveEventDelegate detour)
-    {
-        var listener = (AtkEventListener*)collisionNode;
-        nint vtable = *(nint*)listener;
-        nint recvPtr = Marshal.ReadIntPtr(vtable, IntPtr.Size * 2);
-
-        var hook = HookProvider.HookFromAddress(recvPtr, detour);
-        hook.Enable();
-        return hook;
+        Log.Debug("Yes-button hook enabled (collision node 4)");
     }
 
     // Detour bodies for button click hooks
@@ -285,10 +262,10 @@ public sealed class Plugin : IDalamudPlugin
     {
         recruitHook!.Original(listener, type, p3, p4, p5);
 
-        if (type == AtkEventType.ButtonClick)
-        {
+        if ((int)type == 0xB)
             OnButtonClickDetected();
-        }
+        else
+            Log.Debug($"[Hook] Recruit: Other event {type}");
     }
 
     private unsafe void YesDetour(AtkEventListener* listener,
@@ -297,9 +274,9 @@ public sealed class Plugin : IDalamudPlugin
         yesHook!.Original(listener, type, p3, p4, p5);
 
         if (type == AtkEventType.ButtonClick)
-        {
             OnYesButtonClicked();
-        }
+        else
+            Log.Debug($"[Hook] Yes: Other event {type}");
     }
 
     // Handler for LookingForGroupCondition addon events
