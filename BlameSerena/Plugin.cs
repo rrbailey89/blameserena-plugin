@@ -244,34 +244,17 @@ public sealed class Plugin : IDalamudPlugin
         }
     }
 
-    // Helper to find the first Collision node in a component's NodeList
-    private unsafe AtkResNode* FirstCollisionInNodeList(AtkResNode* n)
-    {
-        // Access NodeList because ChildNode may be null for Uld component nodes
-        var comp = n->GetComponent();
-        if (comp == null) return null;
-
-        var uld = &comp->UldManager;
-        for (int i = 0; i < uld->NodeListCount; i++)
-        {
-            var c = uld->NodeList[i];
-            if (c->Type == NodeType.Collision)
-                return c;
-        }
-        return null;
-    }
-
     // Method to hook the Yes button in the dialog
     private unsafe void HookYesButton(AtkUnitBase* yesno)
     {
         var node8 = yesno->GetNodeById(8);
         if (node8 == null) { Log.Error("YesNo: node 8 not found"); return; }
 
-        var coll4 = FirstCollisionInNodeList(node8);
-        if (coll4 == null) { Log.Error("YesNo: collision node under 8 not found"); return; }
+        var btn = (AtkComponentButton*)node8->GetComponent();
+        if (btn == null) { Log.Error("YesNo: button component not found"); return; }
 
-        buttonListeners.yesButtonListener = (AtkEventListener*)coll4;
-        nint recvPtr = *((nint*)*(nint*)buttonListeners.yesButtonListener + 2);
+        buttonListeners.yesButtonListener = (AtkEventListener*)btn;
+        nint recvPtr = *((nint*)*(nint*)btn + 2);   // v-table slot 2 = ReceiveEvent
 
         // Only hook if not already hooked
         if (buttonHook == null || hookedVTablePtr != recvPtr)
@@ -280,7 +263,7 @@ public sealed class Plugin : IDalamudPlugin
             buttonHook = HookProvider.HookFromAddress<ReceiveEventDelegate>(recvPtr, ButtonDetour);
             buttonHook.Enable();
             hookedVTablePtr = recvPtr;
-            Log.Debug("Button hook enabled (collision node 4)");
+            Log.Debug("Button hook enabled (component ReceiveEvent)");
         }
     }
 
