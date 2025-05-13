@@ -78,8 +78,14 @@ public sealed class Plugin : IDalamudPlugin
         void* data,
         void* a5);
 
-    private Dalamud.Hooking.Hook<ReceiveEventDelegate>? recruitHook;
-    private Dalamud.Hooking.Hook<ReceiveEventDelegate>? yesHook;
+    // Store the hook and listener pointers
+    private Dalamud.Hooking.Hook<ReceiveEventDelegate>? buttonHook;
+    private unsafe struct ButtonListeners {
+        public AtkEventListener* recruitButtonListener;
+        public AtkEventListener* yesButtonListener;
+    }
+    private unsafe ButtonListeners buttonListeners;
+    private nint hookedVTablePtr = nint.Zero;
 
     public static string LogoPath {
         get {
@@ -131,8 +137,10 @@ public sealed class Plugin : IDalamudPlugin
         AddonLifecycle.UnregisterListener(OnCondWindow);
         AddonLifecycle.UnregisterListener(OnYesNoDialog);
 
-        recruitHook?.Disable();
-        yesHook?.Disable();
+        buttonHook?.Disable();
+        buttonHook = null;
+        unsafe { buttonListeners.recruitButtonListener = null; buttonListeners.yesButtonListener = null; }
+        hookedVTablePtr = nint.Zero;
 
         WindowSystem.RemoveAllWindows();
         ConfigWindow.Dispose();
@@ -219,16 +227,21 @@ public sealed class Plugin : IDalamudPlugin
         var node = addon->GetNodeById(111);
         if (node == null) { Log.Error("Recruit button node 111 not found"); return; }
 
-        // The thing that actually receives the click ↓
         var btn = (AtkComponentButton*)node->GetComponent();
         if (btn == null) { Log.Error("Recruit button component not found"); return; }
 
+        buttonListeners.recruitButtonListener = (AtkEventListener*)btn;
         nint recvPtr = *((nint*)*(nint*)btn + 2);   // v-table slot 2 = ReceiveEvent
-        recruitHook?.Disable();
-        recruitHook = HookProvider.HookFromAddress<ReceiveEventDelegate>(recvPtr, RecruitDetour);
-        recruitHook.Enable();
 
-        Log.Debug("Recruit-button hook enabled (component ReceiveEvent)");
+        // Only hook if not already hooked
+        if (buttonHook == null || hookedVTablePtr != recvPtr)
+        {
+            buttonHook?.Disable();
+            buttonHook = HookProvider.HookFromAddress<ReceiveEventDelegate>(recvPtr, ButtonDetour);
+            buttonHook.Enable();
+            hookedVTablePtr = recvPtr;
+            Log.Debug("Button hook enabled (component ReceiveEvent)");
+        }
     }
 
     // Helper to find the first Collision node in a component's NodeList
@@ -257,32 +270,32 @@ public sealed class Plugin : IDalamudPlugin
         var coll4 = FirstCollisionInNodeList(node8);
         if (coll4 == null) { Log.Error("YesNo: collision node under 8 not found"); return; }
 
-        var listener = (AtkEventListener*)coll4;
-        nint recvPtr = *((nint*)*(nint*)listener + 2);
+        buttonListeners.yesButtonListener = (AtkEventListener*)coll4;
+        nint recvPtr = *((nint*)*(nint*)buttonListeners.yesButtonListener + 2);
 
-        yesHook?.Disable();
-        yesHook = HookProvider.HookFromAddress<ReceiveEventDelegate>(recvPtr, YesDetour);
-        yesHook.Enable();
-
-        Log.Debug("Yes-button hook enabled (collision node 4)");
+        // Only hook if not already hooked
+        if (buttonHook == null || hookedVTablePtr != recvPtr)
+        {
+            buttonHook?.Disable();
+            buttonHook = HookProvider.HookFromAddress<ReceiveEventDelegate>(recvPtr, ButtonDetour);
+            buttonHook.Enable();
+            hookedVTablePtr = recvPtr;
+            Log.Debug("Button hook enabled (collision node 4)");
+        }
     }
 
-    // Detour bodies for button click hooks
-    private unsafe void RecruitDetour(AtkEventListener* listener,
-        AtkEventType type, uint param, void* p4, void* p5)
+    // Single detour for both buttons
+    private unsafe void ButtonDetour(AtkEventListener* listener, AtkEventType type, uint param, void* p4, void* p5)
     {
-        recruitHook!.Original(listener, type, param, p4, p5);
+        buttonHook!.Original(listener, type, param, p4, p5);
 
-        if (type == AtkEventType.MouseClick) // value 0xF
-            OnButtonClickDetected();
-    }
-
-    private unsafe void YesDetour(AtkEventListener* l, AtkEventType t, uint p3, void* p4, void* p5)
-    {
-        yesHook!.Original(l, t, p3, p4, p5);
-
-        if (t == AtkEventType.MouseClick)       // value 0xF
-            OnYesButtonClicked();
+        if (type == AtkEventType.MouseClick || type == AtkEventType.ButtonClick)
+        {
+            if (listener == buttonListeners.recruitButtonListener)
+                OnButtonClickDetected();
+            else if (listener == buttonListeners.yesButtonListener)
+                OnYesButtonClicked();
+        }
     }
 
     // Handler for LookingForGroupCondition addon events
@@ -303,7 +316,7 @@ public sealed class Plugin : IDalamudPlugin
         Log.Debug($"[PF COND WINDOW] PreFinalize for {LfgCondAddon}. recruitClicked: {recruitClicked}");
         condWindowOpen = false;
 
-        recruitHook?.Disable();
+        buttonHook?.Disable();
 
         if (!recruitClicked)
         {
@@ -368,7 +381,7 @@ public sealed class Plugin : IDalamudPlugin
         Log.Debug($"[PF YES/NO] YesNo dialog closing. yesClicked: {yesClicked}");
         yesNoDialogOpen = false;
         
-        yesHook?.Disable();
+        buttonHook?.Disable();
         
         // If Yes was clicked and PF condition window is open, this is our confirmation
         if (yesClicked && condWindowOpen)
