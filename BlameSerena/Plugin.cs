@@ -26,6 +26,8 @@ using Dalamud.Hooking;
 
 namespace BlameSerena;
 
+// Version: 0.0.0.17
+
 public sealed class Plugin : IDalamudPlugin
 {
     [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
