@@ -22,6 +22,7 @@ using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using FFXIVClientStructs.FFXIV.Client.System.String;
 using FFXIVClientStructs.FFXIV.Client.UI.Info;
+using Dalamud.Hooking;
 
 namespace BlameSerena;
 
@@ -38,6 +39,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IGameGui GameGui { get; private set; } = null!;
     [PluginService] internal static IAddonLifecycle AddonLifecycle { get; private set; } = null!;
     [PluginService] internal static IPartyFinderGui PartyFinderGui { get; private set; } = null!;
+    [PluginService] internal static IGameInteropProvider HookProvider { get; private set; } = null!;
 
     private const string MainWindowCommandName = "/blameserena";
     private const string ConfigWindowCommandName = "/blameserenaconfig";
@@ -67,6 +69,17 @@ public sealed class Plugin : IDalamudPlugin
     // State for confirmation modal
     private bool showNonCombatConfirm = false;
     private bool confirmRecruitClick = false;
+
+    // Add global hook fields for button click hooks
+    private unsafe delegate void ReceiveEventDelegate(
+        AtkEventListener* listener,
+        AtkEventType eventType,
+        uint param,
+        void* data,
+        void* a5);
+
+    private Dalamud.Hooking.Hook<ReceiveEventDelegate>? recruitHook;
+    private Dalamud.Hooking.Hook<ReceiveEventDelegate>? yesHook;
 
     public static string LogoPath {
         get {
@@ -117,6 +130,9 @@ public sealed class Plugin : IDalamudPlugin
     {
         AddonLifecycle.UnregisterListener(OnCondWindow);
         AddonLifecycle.UnregisterListener(OnYesNoDialog);
+
+        recruitHook?.Disable();
+        yesHook?.Disable();
 
         WindowSystem.RemoveAllWindows();
         ConfigWindow.Dispose();
@@ -194,115 +210,69 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     // Method to hook the Recruit button's event listener
-    private unsafe void HookButtonEventListener()
+    private unsafe void HookRecruitButton()
     {
-        IntPtr addonPtr = GameGui.GetAddonByName(LfgCondAddon, 1);
-        if (addonPtr == IntPtr.Zero)
-        {
-            Log.Error("[HookButtonEventListener] LookingForGroupCondition addon not found");
-            return;
-        }
-        
-        var unitBase = (AtkUnitBase*)addonPtr;
-        AtkResNode* buttonNode = unitBase->GetNodeById(111);
-        
-        if (buttonNode == null)
-        {
-            Log.Error("[HookButtonEventListener] Button node 111 not found");
-            return;
-        }
-        
-        // Get the collision node which handles mouse events
-        var buttonComponent = buttonNode->GetComponent();
-        if (buttonComponent == null)
-        {
-            Log.Error("[HookButtonEventListener] Button component is null");
-            return;
-        }
+        var addon = (AtkUnitBase*)GameGui.GetAddonByName(LfgCondAddon, 1);
+        if (addon == null) { Log.Error("LFGCond addon not found"); return; }
 
-        // Fix: NodeList is a pointer to an array, NodeListCount is the count
-        if (buttonComponent->UldManager.NodeListCount == 0 || buttonComponent->UldManager.NodeList == null)
-        {
-            Log.Error("[HookButtonEventListener] Node list is null or empty");
-            return;
-        }
-        
-        // Usually the collision node is the first child
-        var collisionNode = buttonComponent->UldManager.NodeList[0];
-        if (collisionNode == null)
-        {
-            Log.Error("[HookButtonEventListener] Collision node is null");
-            return;
-        }
+        var btnNode = addon->GetNodeById(111);
+        var comp = btnNode->GetComponent();
+        if (comp == null || comp->UldManager.NodeListCount == 0) return;
+        var collision = comp->UldManager.NodeList[0];
 
-        if (collisionNode->Type != NodeType.Collision)
-        {
-            Log.Error($"[HookButtonEventListener] Expected collision node, got {collisionNode->Type}");
-            return;
-        }
-        
-        // Instead of assigning a managed listener, you need to hook the event handler function here.
-        // You can use a function hook (e.g. using Dalamud's Signature attribute or a detour library) to intercept the click event.
-        // Example:
-        // Hook the function pointer at collisionNode->EventListener or the vtable method for ReceiveEvent.
-        // When the button is clicked, call OnButtonClickDetected().
-        //
-        // [Function hook implementation required here]
-        Log.Debug("[HookButtonEventListener] You must implement a function hook here to intercept button clicks.");
+        recruitHook?.Disable();
+        recruitHook = HookNodeClick(collision, RecruitDetour);
+        Log.Debug("Recruit-button hook enabled");
     }
 
     // Method to hook the Yes button in the dialog
-    private unsafe void HookYesNoDialogButton(AtkUnitBase* unitBase)
+    private unsafe void HookYesButton(AtkUnitBase* yesno)
     {
-        if (unitBase == null)
-        {
-            Log.Error("[HookYesNoDialogButton] UnitBase is null");
-            return;
-        }
+        var yesNode = yesno->GetNodeById(8); // ID 8 = "Yes"
+        var comp = yesNode->GetComponent();
+        if (comp == null || comp->UldManager.NodeListCount == 0) return;
+        var collision = comp->UldManager.NodeList[0];
 
-        // For SelectYesno addon, the Yes button is NodeID 8
-        AtkResNode* yesButtonNode = unitBase->GetNodeById(8);
-        
-        if (yesButtonNode == null)
-        {
-            Log.Error("[HookYesNoDialogButton] Yes button node (ID 8) not found");
-            return;
-        }
-        
-        var buttonComponent = yesButtonNode->GetComponent();
-        if (buttonComponent == null)
-        {
-            Log.Error("[HookYesNoDialogButton] Yes button component is null");
-            return;
-        }
+        yesHook?.Disable();
+        yesHook = HookNodeClick(collision, YesDetour);
+        Log.Debug("Yes-button hook enabled");
+    }
 
-        // Fix: NodeList is a pointer to an array, NodeListCount is the count
-        if (buttonComponent->UldManager.NodeListCount == 0 || buttonComponent->UldManager.NodeList == null)
-        {
-            Log.Error("[HookYesNoDialogButton] Yes button node list is null or empty");
-            return;
-        }
-        
-        // Usually the collision node is the first child
-        var collisionNode = buttonComponent->UldManager.NodeList[0];
-        if (collisionNode == null)
-        {
-            Log.Error("[HookYesNoDialogButton] Collision node is null");
-            return;
-        }
+    // Utility to install a hook on a node
+    private unsafe Dalamud.Hooking.Hook<ReceiveEventDelegate> HookNodeClick(
+        AtkResNode* collisionNode,
+        ReceiveEventDelegate detour)
+    {
+        var listener = (AtkEventListener*)collisionNode;
+        nint vtable = *(nint*)listener;
+        nint recvPtr = Marshal.ReadIntPtr(vtable, IntPtr.Size * 2);
 
-        if (collisionNode->Type != NodeType.Collision)
+        var hook = HookProvider.HookFromAddress(recvPtr, detour);
+        hook.Enable();
+        return hook;
+    }
+
+    // Detour bodies for button click hooks
+    private unsafe void RecruitDetour(AtkEventListener* listener,
+        AtkEventType type, uint p3, void* p4, void* p5)
+    {
+        recruitHook!.Original(listener, type, p3, p4, p5);
+
+        if (type == AtkEventType.ButtonClick)
         {
-            Log.Error($"[HookYesNoDialogButton] Expected collision node, got {collisionNode->Type}");
-            return;
+            OnButtonClickDetected();
         }
-        
-        // Instead of assigning a managed listener, you need to hook the event handler function here.
-        // You can use a function hook (e.g. using Dalamud's Signature attribute or a detour library) to intercept the click event.
-        // When the Yes button is clicked, call OnYesButtonClicked().
-        //
-        // [Function hook implementation required here]
-        Log.Debug("[HookYesNoDialogButton] You must implement a function hook here to intercept Yes button clicks.");
+    }
+
+    private unsafe void YesDetour(AtkEventListener* listener,
+        AtkEventType type, uint p3, void* p4, void* p5)
+    {
+        yesHook!.Original(listener, type, p3, p4, p5);
+
+        if (type == AtkEventType.ButtonClick)
+        {
+            OnYesButtonClicked();
+        }
     }
 
     // Handler for LookingForGroupCondition addon events
@@ -314,8 +284,7 @@ public sealed class Plugin : IDalamudPlugin
             Log.Debug($"[PF COND WINDOW] PostSetup for {LfgCondAddon}.");
             condWindowOpen = true;
 
-            // Hook into the Recruit button's event listener
-            HookButtonEventListener();
+            HookRecruitButton();
             
             return;
         }
@@ -323,6 +292,8 @@ public sealed class Plugin : IDalamudPlugin
         // PreFinalize
         Log.Debug($"[PF COND WINDOW] PreFinalize for {LfgCondAddon}. recruitClicked: {recruitClicked}");
         condWindowOpen = false;
+
+        recruitHook?.Disable();
 
         if (!recruitClicked)
         {
@@ -372,13 +343,10 @@ public sealed class Plugin : IDalamudPlugin
             Log.Debug("[PF YES/NO] YesNo dialog opened.");
             yesNoDialogOpen = true;
             
-            // Only hook if this is relevant to our PF window
             if (condWindowOpen)
             {
-                HookYesNoDialogButton((AtkUnitBase*)addonPtr);
+                HookYesButton((AtkUnitBase*)addonPtr);
                 
-                // Since a confirmation dialog appeared, we need to reset recruitClicked
-                // It will be set again only if the user clicks "Yes"
                 Log.Debug("[PF YES/NO] Confirmation dialog appeared for PF listing - resetting recruitClicked until confirmed");
                 recruitClicked = false;
             }
@@ -389,6 +357,8 @@ public sealed class Plugin : IDalamudPlugin
         // PreFinalize
         Log.Debug($"[PF YES/NO] YesNo dialog closing. yesClicked: {yesClicked}");
         yesNoDialogOpen = false;
+        
+        yesHook?.Disable();
         
         // If Yes was clicked and PF condition window is open, this is our confirmation
         if (yesClicked && condWindowOpen)
