@@ -231,21 +231,34 @@ public sealed class Plugin : IDalamudPlugin
         Log.Debug("Recruit-button hook enabled (component ReceiveEvent)");
     }
 
+    // Helper to find the first Collision node in a component's NodeList
+    private unsafe AtkResNode* FirstCollisionInNodeList(AtkResNode* n)
+    {
+        // Access NodeList because ChildNode may be null for Uld component nodes
+        var comp = n->GetComponent();
+        if (comp == null) return null;
+
+        var uld = &comp->UldManager;
+        for (int i = 0; i < uld->NodeListCount; i++)
+        {
+            var c = uld->NodeList[i];
+            if (c->Type == NodeType.Collision)
+                return c;
+        }
+        return null;
+    }
+
     // Method to hook the Yes button in the dialog
     private unsafe void HookYesButton(AtkUnitBase* yesno)
     {
-        // container 8 is NOT clickable – drill down to 4
-        var cont8 = yesno->GetNodeById(8);
-        if (cont8 == null) { Log.Error("YesNo: Node 8 not found"); return; }
+        var node8 = yesno->GetNodeById(8);
+        if (node8 == null) { Log.Error("YesNo: node 8 not found"); return; }
 
-        // Find child node with NodeId == 4
-        AtkResNode* coll4 = null;
-        for (var n = cont8->ChildNode; n != null; n = n->NextSiblingNode)
-            if (n->NodeId == 4) { coll4 = n; break; }
-        if (coll4 == null || coll4->Type != NodeType.Collision) { Log.Error("YesNo: Collision node 4 not found or not a collision node"); return; }
+        var coll4 = FirstCollisionInNodeList(node8);
+        if (coll4 == null) { Log.Error("YesNo: collision node under 8 not found"); return; }
 
         var listener = (AtkEventListener*)coll4;
-        var recvPtr  = *((nint*)*(nint*)listener + 2);
+        nint recvPtr = *((nint*)*(nint*)listener + 2);
 
         yesHook?.Disable();
         yesHook = HookProvider.HookFromAddress<ReceiveEventDelegate>(recvPtr, YesDetour);
@@ -264,15 +277,12 @@ public sealed class Plugin : IDalamudPlugin
             OnButtonClickDetected();
     }
 
-    private unsafe void YesDetour(AtkEventListener* listener,
-        AtkEventType type, uint p3, void* p4, void* p5)
+    private unsafe void YesDetour(AtkEventListener* l, AtkEventType t, uint p3, void* p4, void* p5)
     {
-        yesHook!.Original(listener, type, p3, p4, p5);
+        yesHook!.Original(l, t, p3, p4, p5);
 
-        if (type == AtkEventType.ButtonClick)
+        if (t == AtkEventType.MouseClick)       // value 0xF
             OnYesButtonClicked();
-        else
-            Log.Debug($"[Hook] Yes: Other event {type}");
     }
 
     // Handler for LookingForGroupCondition addon events
