@@ -68,10 +68,6 @@ public sealed class Plugin : IDalamudPlugin
     private ushort tempPwdState = 0;
     private byte tempFlags = 0;
 
-    // State for confirmation modal
-    private bool showNonCombatConfirm = false;
-    private bool confirmRecruitClick = false;
-
     // Add global hook fields for button click hooks
     private unsafe delegate void ReceiveEventDelegate(
         AtkEventListener* listener,
@@ -139,10 +135,8 @@ public sealed class Plugin : IDalamudPlugin
         AddonLifecycle.UnregisterListener(OnCondWindow);
         AddonLifecycle.UnregisterListener(OnYesNoDialog);
 
-        buttonHook?.Disable();
-        buttonHook = null;
+        DisableAndDisposeHook();
         unsafe { buttonListeners.recruitButtonListener = null; buttonListeners.yesButtonListener = null; }
-        hookedVTablePtr = nint.Zero;
 
         WindowSystem.RemoveAllWindows();
         ConfigWindow.Dispose();
@@ -217,6 +211,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         Log.Debug("[OnYesButtonClicked] User clicked Yes in confirmation dialog");
         yesClicked = true;
+        recruitClicked = true; // let PreFinalize know this dialog was confirmed
     }
 
     // Method to hook the Recruit button's event listener
@@ -306,7 +301,7 @@ public sealed class Plugin : IDalamudPlugin
         Log.Debug($"[PF COND WINDOW] PreFinalize for {LfgCondAddon}. recruitClicked: {recruitClicked}");
         condWindowOpen = false;
 
-        buttonHook?.Disable();
+        DisableAndDisposeHook();
 
         if (!recruitClicked)
         {
@@ -371,16 +366,7 @@ public sealed class Plugin : IDalamudPlugin
         Log.Debug($"[PF YES/NO] YesNo dialog closing. yesClicked: {yesClicked}");
         yesNoDialogOpen = false;
         
-        buttonHook?.Disable();
-        
-        // If Yes was clicked and PF condition window is open, this is our confirmation
-        if (yesClicked && condWindowOpen)
-        {
-            Log.Debug("[PF YES/NO] User confirmed non-combat PF post via YesNo dialog.");
-            
-            // Set our recruitment clicked flag so the PF window can process it on close
-            recruitClicked = true;
-        }
+        DisableAndDisposeHook();
         
         // Reset the yes clicked flag
         yesClicked = false;
@@ -495,5 +481,16 @@ public sealed class Plugin : IDalamudPlugin
         catch (HttpRequestException ex) { Log.Error(ex, $"[HTTP SEND] HTTP Request Exception to {apiEndpoint}."); }
         catch (TaskCanceledException ex) { Log.Error(ex, $"[HTTP SEND] Request timed out to {apiEndpoint}."); }
         catch (Exception ex) { Log.Error(ex, $"[HTTP SEND] Unexpected error sending notification to {apiEndpoint}."); }
+    }
+
+    private void DisableAndDisposeHook()
+    {
+        if (buttonHook != null)
+        {
+            buttonHook.Disable();
+            buttonHook.Dispose();
+            buttonHook = null;
+            hookedVTablePtr = IntPtr.Zero;
+        }
     }
 }
