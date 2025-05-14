@@ -45,7 +45,6 @@ public sealed class Plugin : IDalamudPlugin
     // New event-driven PF state fields
     private bool condWindowOpen = false;
     private bool recruitClicked = false;
-    private bool yesNoDialogOpen = false;
     private bool yesClicked = false;
     private ulong lastListingId = 0;   // for duplicate-send guard
     private ulong lastDutyId = 0;
@@ -334,25 +333,18 @@ public sealed class Plugin : IDalamudPlugin
         if (ev == AddonEvent.PostSetup)
         {
             Log.Debug("[PF YES/NO] YesNo dialog opened.");
-            yesNoDialogOpen = true;
-            
             if (condWindowOpen)
             {
                 HookYesButton((AtkUnitBase*)addonPtr);
-                
                 Log.Debug("[PF YES/NO] Confirmation dialog appeared for PF listing - resetting recruitClicked until confirmed");
                 recruitClicked = false;
             }
-            
             return;
         }
         
         // PreFinalize
         Log.Debug($"[PF YES/NO] YesNo dialog closing. yesClicked: {yesClicked}");
-        yesNoDialogOpen = false;
-        
         DisableAndDisposeHook();
-        
         // Reset the yes clicked flag
         yesClicked = false;
     }
