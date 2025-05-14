@@ -26,7 +26,7 @@ using Dalamud.Hooking;
 
 namespace BlameSerena;
 
-// Version: 0.0.0.17
+// Version: 0.0.0.18
 
 public sealed class Plugin : IDalamudPlugin
 {
@@ -274,6 +274,11 @@ public sealed class Plugin : IDalamudPlugin
     {
         buttonHook!.Original(listener, type, param, p4, p5);
 
+        // TEMP: trace everything that comes from the Yes button
+        if (listener == buttonListeners.yesButtonListener)
+            Log.Debug($"[TRACE YES] type={type} (0x{(int)type:X}), param={param}");
+
+        // existing filter
         if (type == AtkEventType.MouseClick || type == AtkEventType.ButtonClick)
         {
             if (listener == buttonListeners.recruitButtonListener)
