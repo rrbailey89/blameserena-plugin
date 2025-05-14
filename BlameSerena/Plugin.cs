@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Runtime.InteropServices;
 using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Game.Command;
@@ -11,22 +10,12 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Text;
 using Dalamud.Interface.Windowing;
-using ImGuiNET;
 using Dalamud.Plugin.Services;
 using BlameSerena.Windows;
-using Dalamud.Game.Gui.PartyFinder;
-using Dalamud.Game.Gui.PartyFinder.Types;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
-using Lumina.Excel.Sheets;
-using FFXIVClientStructs.FFXIV.Client.UI;
 using FFXIVClientStructs.FFXIV.Component.GUI;
-using FFXIVClientStructs.FFXIV.Client.System.String;
-using FFXIVClientStructs.FFXIV.Client.UI.Info;
-using Dalamud.Hooking;
 
 namespace BlameSerena;
-
-// Version: 0.0.0.18
 
 public sealed class Plugin : IDalamudPlugin
 {
