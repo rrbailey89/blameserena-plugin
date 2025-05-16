@@ -178,7 +178,7 @@ public sealed class Plugin : IDalamudPlugin
             tempPwdState = r.Password;
             tempFlags = (byte)r.DutyFinderSettingFlags;
             var category = GetCategoryFromDuty(tempDutyId);
-            Log.Debug($"[OnButtonClickDetected] Stored PF data: DutyId={{tempDutyId}}, Comment='{{tempComment}}', PwdState={{tempPwdState}}, Flags={{tempFlags}}, Category={category}");
+            Log.Debug($"[OnButtonClickDetected] Stored PF data: DutyId={tempDutyId}, Comment='{tempComment}', PwdState={tempPwdState}, Flags={tempFlags}, Category={category}");
         }
     }
 
@@ -187,13 +187,9 @@ public sealed class Plugin : IDalamudPlugin
     {
         var dutySheet = DataManager.GetExcelSheet<ContentFinderCondition>();
         var dutyRow   = dutySheet?.GetRow(dutyId);
-        var typeRow = dutyRow?.ContentType.Value;
-        if (typeRow == null)
-            return "Other";
-        var category = typeRow.ToString();
-        if (string.IsNullOrEmpty(category))
-            return "Other";
-        return category;
+        var typeRow   = dutyRow?.ContentType.Value;
+        var category  = typeRow?.Name.ToString();      // <- the localised name
+        return string.IsNullOrEmpty(category) ? "Other" : category;
     }
 
     // Handler for Yes button clicks in confirmation dialog
