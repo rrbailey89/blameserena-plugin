@@ -323,19 +323,19 @@ public sealed class Plugin : IDalamudPlugin
     private unsafe string GetYesNoMessage(AtkUnitBase* yesno)
     {
         // Try node 3 first, then 2, then 1
-        for (uint id = 3; id >= 1; --id)
+        for (int id = 3; id >= 1; --id)
         {
-            var node = yesno->GetNodeById(id);
-            if (node != null)
-            {
-                var n = (AtkTextNode*)node;
-                if (n != null)
-                {
-                    var raw = n->NodeText.ToString();
-                    if (!string.IsNullOrEmpty(raw))
-                        return Sanitize(raw);
-                }
-            }
+            var node = yesno->GetNodeById((uint)id);
+            if (node == null) continue;
+
+            var textNode = (AtkTextNode*)node;
+            if (textNode == null) continue;
+
+            var utf8 = textNode->NodeText;
+            if (utf8.StringPtr == null || utf8.Length == 0)   // <-- critical check
+                continue;
+
+            return Sanitize(utf8.ToString());          // safe: ToString() never null
         }
         return string.Empty;
     }

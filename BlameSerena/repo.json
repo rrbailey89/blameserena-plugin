@@ -14,10 +14,10 @@
     "DownloadCount": 28,
     "DownloadLinkInstall": "https://github.com/rrbailey89/blameserena-plugin/releases/latest/download/BlameSerena.zip",
     "DownloadLinkUpdate": "https://github.com/rrbailey89/blameserena-plugin/releases/latest/download/BlameSerena.zip",
-    "AssemblyVersion": "1.0.0.10",
+    "AssemblyVersion": "1.0.0.11",
     "ApplicableVersion": "any",
     "DalamudApiLevel": 12,
-    "Changelog": "Version 1.0.0.10: Move PF data read to PreFinalize for accuracy.",
+    "Changelog": "Version 1.0.0.11: Robust Yes/No dialog message extraction and null safety.",
     "DownloadLinkTesting": "",
     "IconUrl": "https://raw.githubusercontent.com/rrbailey89/blameserena-plugin/master/Data/logo.png"
   }
