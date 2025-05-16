@@ -57,6 +57,7 @@ public sealed class Plugin : IDalamudPlugin
     private string tempComment = string.Empty;
     private ushort tempPwdState = 0;
     private byte tempFlags = 0;
+    private ushort tempCategory = 0; // Store SelectedCategory
 
     // Add global hook fields for button click hooks
     private unsafe delegate void ReceiveEventDelegate(
@@ -176,8 +177,23 @@ public sealed class Plugin : IDalamudPlugin
             tempComment = r.CommentString;
             tempPwdState = r.Password;
             tempFlags = (byte)r.DutyFinderSettingFlags;
-            Log.Debug($"[OnButtonClickDetected] Stored PF data: DutyId={tempDutyId}, Comment='{tempComment}', PwdState={tempPwdState}, Flags={tempFlags}");
+            tempCategory = r.SelectedCategory;
+            Log.Debug($"[OnButtonClickDetected] Stored PF data: DutyId={{tempDutyId}}, Comment='{{tempComment}}', PwdState={{tempPwdState}}, Flags={{tempFlags}}, Category={{tempCategory}} ({MapCategory(tempCategory)})");
         }
+    }
+
+    // Helper to map SelectedCategory to a string
+    private string MapCategory(ushort category)
+    {
+        // These values may need to be adjusted based on game version/data:
+        // 1 = Dungeon, 2 = Trial, 3 = Raid (commonly used, but check your client!)
+        return category switch
+        {
+            1 => "Dungeon",
+            2 => "Trial",
+            3 => "Raid",
+            _ => "Other"
+        };
     }
 
     // Handler for Yes button clicks in confirmation dialog
