@@ -15,6 +15,7 @@ using BlameSerena.Windows;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using System.Linq;
+using Lumina.Excel.Sheets;
 
 namespace BlameSerena;
 
@@ -57,7 +58,6 @@ public sealed class Plugin : IDalamudPlugin
     private string tempComment = string.Empty;
     private ushort tempPwdState = 0;
     private byte tempFlags = 0;
-    private ushort tempCategory = 0; // Store SelectedCategory
 
     // Add global hook fields for button click hooks
     private unsafe delegate void ReceiveEventDelegate(
@@ -177,23 +177,23 @@ public sealed class Plugin : IDalamudPlugin
             tempComment = r.CommentString;
             tempPwdState = r.Password;
             tempFlags = (byte)r.DutyFinderSettingFlags;
-            tempCategory = r.SelectedCategory;
-            Log.Debug($"[OnButtonClickDetected] Stored PF data: DutyId={{tempDutyId}}, Comment='{{tempComment}}', PwdState={{tempPwdState}}, Flags={{tempFlags}}, Category={{tempCategory}} ({MapCategory(tempCategory)})");
+            var category = GetCategoryFromDuty(tempDutyId);
+            Log.Debug($"[OnButtonClickDetected] Stored PF data: DutyId={{tempDutyId}}, Comment='{{tempComment}}', PwdState={{tempPwdState}}, Flags={{tempFlags}}, Category={category}");
         }
     }
 
-    // Helper to map SelectedCategory to a string
-    private string MapCategory(ushort category)
+    // Lookup category from ContentFinderCondition sheet
+    private string GetCategoryFromDuty(ushort dutyId)
     {
-        // These values may need to be adjusted based on game version/data:
-        // 1 = Dungeon, 2 = Trial, 3 = Raid (commonly used, but check your client!)
-        return category switch
-        {
-            1 => "Dungeon",
-            2 => "Trial",
-            3 => "Raid",
-            _ => "Other"
-        };
+        var dutySheet = DataManager.GetExcelSheet<ContentFinderCondition>();
+        var dutyRow   = dutySheet?.GetRow(dutyId);
+        var typeRow = dutyRow?.ContentType.Value;
+        if (typeRow == null)
+            return "Other";
+        var category = typeRow.ToString();
+        if (string.IsNullOrEmpty(category))
+            return "Other";
+        return category;
     }
 
     // Handler for Yes button clicks in confirmation dialog
