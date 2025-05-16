@@ -14,6 +14,7 @@ using Dalamud.Plugin.Services;
 using BlameSerena.Windows;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
 using FFXIVClientStructs.FFXIV.Component.GUI;
+using System.Linq;
 
 namespace BlameSerena;
 
@@ -300,21 +301,49 @@ public sealed class Plugin : IDalamudPlugin
         Log.Debug($"[PF COND WINDOW] PreFinalize: Updated last sent values. LastLID: {lastListingId}, LastDutyID: {lastDutyId}, LastCommentHash: {lastCommentHash}");
     }
 
+    // Utility to extract and sanitize the Yes/No dialog message
+    private unsafe string GetYesNoMessage(AtkUnitBase* yesno)
+    {
+        // Try node 3 first, then 2, then 1
+        for (uint id = 3; id >= 1; --id)
+        {
+            var node = yesno->GetNodeById(id);
+            if (node != null)
+            {
+                var n = (AtkTextNode*)node;
+                if (n != null)
+                {
+                    var raw = n->NodeText.ToString();
+                    if (!string.IsNullOrEmpty(raw))
+                        return Sanitize(raw);
+                }
+            }
+        }
+        return string.Empty;
+    }
+
+    private static string Sanitize(string s)
+    {
+        // Remove all C0-control chars except \n (0x0A) if you want to keep line-breaks
+        return new string(s.Where(c => c >= 0x20 || c == '\n').ToArray())
+                 .Trim(); // also strips the trailing newline Lumina adds
+    }
+
     // Handler for the YesNo dialog events
     private unsafe void OnYesNoDialog(AddonEvent ev, AddonArgs args)
     {
         var addonPtr = args.Addon;
         if (ev == AddonEvent.PostSetup)
         {
-            // Inspect dialog text for confirmation string
             var yesno = (AtkUnitBase*)addonPtr;
-            AtkTextNode* textNode = (AtkTextNode*)yesno->GetNodeById(2);
-            if (textNode == null)
-                textNode = (AtkTextNode*)yesno->GetNodeById(1);
-            string message = textNode != null ? textNode->NodeText.ToString() : string.Empty;
-            if (!(message.Contains("listing", StringComparison.OrdinalIgnoreCase) && message.Contains("non-combat", StringComparison.OrdinalIgnoreCase)))
+            var message = GetYesNoMessage(yesno);
+            if (!(message.Contains("You cannot carry out the selected objective with", StringComparison.OrdinalIgnoreCase) &&
+                  message.Contains("this party composition. Proceed anyway?", StringComparison.OrdinalIgnoreCase)))
             {
                 Log.Debug($"[PF YES/NO] Dialog text did not match PF confirmation: '{message}'");
+                recruitClicked = false;
+                yesClicked = false;
+                DisableAndDisposeHook();
                 return;
             }
             HookYesButton(yesno);
