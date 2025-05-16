@@ -168,16 +168,6 @@ public sealed class Plugin : IDalamudPlugin
         yesClicked = false; // reset from previous run
         confirmationShown = false;
         Log.Debug("[OnButtonClickDetected] Recruit button click intercepted!");
-        var agent = AgentLookingForGroup.Instance();
-        if (agent != null)
-        {
-            var r = agent->StoredRecruitmentInfo;
-            tempDutyId = r.SelectedDutyId;
-            tempComment = r.CommentString;
-            tempPwdState = r.Password;
-            tempFlags = (byte)r.DutyFinderSettingFlags;
-            Log.Debug($"[OnButtonClickDetected] Stored PF data: DutyId={tempDutyId}, Comment='{tempComment}', PwdState={tempPwdState}, Flags={tempFlags}");
-        }
     }
 
     // Handler for Yes button clicks in confirmation dialog
@@ -284,6 +274,19 @@ public sealed class Plugin : IDalamudPlugin
         recruitClicked = false; // Reset immediately after checking
         var agent = AgentLookingForGroup.Instance();
         ulong currentOwnListingId = (agent != null) ? agent->OwnListingId : 0;
+        // (B) Read StoredRecruitmentInfo here, with Utf8String guards
+        if (agent != null)
+        {
+            var r = agent->StoredRecruitmentInfo;
+            tempDutyId = r.SelectedDutyId;
+            if (r.CommentString.Length > 0)
+                tempComment = r.CommentString.ToString();
+            else
+                tempComment = string.Empty;
+            tempPwdState = r.Password;
+            tempFlags = (byte)r.DutyFinderSettingFlags;
+            Log.Debug($"[OnCondWindow:PreFinalize] Stored PF data: DutyId={tempDutyId}, Comment='{tempComment}', PwdState={tempPwdState}, Flags={tempFlags}");
+        }
         int tempCommentHash = tempComment.GetHashCode();
         // Duplicate guard: check against last sent values
         if ((currentOwnListingId != 0 && currentOwnListingId == lastListingId && tempDutyId == lastDutyId && tempCommentHash == lastCommentHash) ||
@@ -310,20 +313,16 @@ public sealed class Plugin : IDalamudPlugin
     // Utility to extract and sanitize the Yes/No dialog message
     private unsafe string GetYesNoMessage(AtkUnitBase* yesno)
     {
-        // Try node 3 first, then 2, then 1
-        for (uint id = 3; id >= 1; --id)
+        for (int id = 3; id >= 1; id--)
         {
-            var node = yesno->GetNodeById(id);
-            if (node != null)
-            {
-                var n = (AtkTextNode*)node;
-                if (n != null)
-                {
-                    var raw = n->NodeText.ToString();
-                    if (!string.IsNullOrEmpty(raw))
-                        return Sanitize(raw);
-                }
-            }
+            var node = yesno->GetNodeById((uint)id);
+            if (node == null || node->Type != NodeType.Text) continue;
+
+            var t = (AtkTextNode*)node;
+            var s = t->NodeText;
+            if (s.Length == 0) continue;
+
+            return Sanitize(s.ToString());
         }
         return string.Empty;
     }
@@ -470,7 +469,11 @@ public sealed class Plugin : IDalamudPlugin
             buttonHook.Disable();
             buttonHook.Dispose();
             buttonHook = null;
-            hookedVTablePtr = IntPtr.Zero;
+        }
+        unsafe {
+            buttonListeners.recruitButtonListener = null;
+            buttonListeners.yesButtonListener     = null;
+            hookedVTablePtr                       = IntPtr.Zero;
         }
     }
 }
