@@ -109,10 +109,7 @@ public sealed class Plugin : IDalamudPlugin
         // Register event-driven hooks
         AddonLifecycle.RegisterListener(AddonEvent.PostSetup, LfgCondAddon, OnCondWindow);
         AddonLifecycle.RegisterListener(AddonEvent.PreFinalize, LfgCondAddon, OnCondWindow);
-        
-        // Add listeners for Yes/No dialog
-        AddonLifecycle.RegisterListener(AddonEvent.PostSetup, YesNoAddonName, OnYesNoDialog);
-        AddonLifecycle.RegisterListener(AddonEvent.PreFinalize, YesNoAddonName, OnYesNoDialog);
+        // YesNoAddonName listeners are now registered lazily in OnCondWindow
 
         Log.Information($"=== {PluginInterface.Manifest.Name} Loaded ===");
         Log.Information($"Monitoring Party Finder agent for own listing.");
@@ -121,7 +118,8 @@ public sealed class Plugin : IDalamudPlugin
     public void Dispose()
     {
         AddonLifecycle.UnregisterListener(OnCondWindow);
-        AddonLifecycle.UnregisterListener(OnYesNoDialog);
+        // Remove global YesNoAddonName listener unregister
+        // AddonLifecycle.UnregisterListener(OnYesNoDialog);
 
         DisableAndDisposeHook();
         unsafe { buttonListeners.recruitButtonListener = null; buttonListeners.yesButtonListener = null; }
@@ -164,8 +162,6 @@ public sealed class Plugin : IDalamudPlugin
     private unsafe void OnButtonClickDetected()
     {
         Log.Debug("[OnButtonClickDetected] Recruit button click intercepted!");
-        
-        // Capture PF data here - similar to original HandleCustomRecruitButtonClick
         var agent = AgentLookingForGroup.Instance();
         if (agent != null)
         {
@@ -174,24 +170,9 @@ public sealed class Plugin : IDalamudPlugin
             tempComment = r.CommentString;
             tempPwdState = r.Password;
             tempFlags = (byte)r.DutyFinderSettingFlags;
-            
             Log.Debug($"[OnButtonClickDetected] Stored PF data: DutyId={tempDutyId}, Comment='{tempComment}', PwdState={tempPwdState}, Flags={tempFlags}");
         }
-        
-        // We don't know yet if this will be confirmed immediately or if the game
-        // will show a confirmation dialog (for non-combat jobs)
-        // The game will handle this check automatically:
-        // - If combat job: no dialog will appear, window closes immediately
-        // - If non-combat: the game will show confirmation, which our YesNoDialog handler will catch
-        
-        // For now, we optimistically set recruitClicked, but we'll reset it if the window closes
-        // without proper confirmation for non-combat jobs
-        Log.Debug("[OnButtonClickDetected] Setting recruitClicked flag, waiting to see if confirmation is required");
         recruitClicked = true;
-        
-        // If the game shows a confirmation dialog, our OnYesNoDialog handler will manage this flag:
-        // - If "No" is clicked, the dialog closes without setting yesClicked, and the window stays open
-        // - If "Yes" is clicked, yesClicked is set to true in OnYesButtonClicked
     }
 
     // Handler for Yes button clicks in confirmation dialog
@@ -275,31 +256,28 @@ public sealed class Plugin : IDalamudPlugin
         {
             Log.Debug($"[PF COND WINDOW] PostSetup for {LfgCondAddon}.");
             condWindowOpen = true;
-
             HookRecruitButton();
-            
+            // Lazily register YesNo dialog listeners
+            AddonLifecycle.RegisterListener(AddonEvent.PostSetup, YesNoAddonName, OnYesNoDialog);
+            AddonLifecycle.RegisterListener(AddonEvent.PreFinalize, YesNoAddonName, OnYesNoDialog);
             return;
         }
-
         // PreFinalize
         Log.Debug($"[PF COND WINDOW] PreFinalize for {LfgCondAddon}. recruitClicked: {recruitClicked}");
         condWindowOpen = false;
-
         DisableAndDisposeHook();
-
+        // Lazily unregister YesNo dialog listeners
+        AddonLifecycle.UnregisterListener(OnYesNoDialog);
         if (!recruitClicked)
         {
             Log.Debug("[PF COND WINDOW] PreFinalize: Recruit button was not clicked. Resetting recruitClicked and returning.");
             recruitClicked = false; // Reset just to be safe
             return;
         }
-
         recruitClicked = false; // Reset immediately after checking
-
         var agent = AgentLookingForGroup.Instance();
         ulong currentOwnListingId = (agent != null) ? agent->OwnListingId : 0;
         int tempCommentHash = tempComment.GetHashCode();
-
         // Duplicate guard: check against last sent values
         if ((currentOwnListingId != 0 && currentOwnListingId == lastListingId && tempDutyId == lastDutyId && tempCommentHash == lastCommentHash) ||
             (currentOwnListingId == 0 && tempDutyId == lastDutyId && tempCommentHash == lastCommentHash && lastListingId != 0))
@@ -307,17 +285,14 @@ public sealed class Plugin : IDalamudPlugin
             Log.Debug("[PF COND WINDOW] PreFinalize: Duplicate recruit click detected. Skipping send.");
             return;
         }
-
         string dutyName = GetDutyName(tempDutyId);
         if (string.IsNullOrEmpty(dutyName))
         {
             Log.Warning($"[PF COND WINDOW] PreFinalize: Could not get duty name for Duty ID {tempDutyId}. Using raw ID as fallback.");
             dutyName = $"Duty ID {tempDutyId}";
         }
-
         Log.Debug($"[PF COND WINDOW] PreFinalize: Processing listing. DutyName: '{dutyName}', Comment: '{tempComment}', PwdState: {tempPwdState}, Flags: {tempFlags}");
         ProcessAndNotifyStoredListing(dutyName, tempComment, tempPwdState, tempFlags);
-
         lastDutyId = tempDutyId;
         lastCommentHash = tempCommentHash;
         if (currentOwnListingId != 0)
@@ -329,23 +304,26 @@ public sealed class Plugin : IDalamudPlugin
     private unsafe void OnYesNoDialog(AddonEvent ev, AddonArgs args)
     {
         var addonPtr = args.Addon;
-        
         if (ev == AddonEvent.PostSetup)
         {
-            Log.Debug("[PF YES/NO] YesNo dialog opened.");
-            if (condWindowOpen)
+            // Inspect dialog text for confirmation string
+            var yesno = (AtkUnitBase*)addonPtr;
+            AtkTextNode* textNode = (AtkTextNode*)yesno->GetNodeById(2);
+            if (textNode == null)
+                textNode = (AtkTextNode*)yesno->GetNodeById(1);
+            string message = textNode != null ? textNode->NodeText.ToString() : string.Empty;
+            if (!(message.Contains("listing", StringComparison.OrdinalIgnoreCase) && message.Contains("non-combat", StringComparison.OrdinalIgnoreCase)))
             {
-                HookYesButton((AtkUnitBase*)addonPtr);
-                Log.Debug("[PF YES/NO] Confirmation dialog appeared for PF listing - resetting recruitClicked until confirmed");
-                recruitClicked = false;
+                Log.Debug($"[PF YES/NO] Dialog text did not match PF confirmation: '{message}'");
+                return;
             }
+            HookYesButton(yesno);
+            Log.Debug("[PF YES/NO] Confirmation dialog opened for PF.");
             return;
         }
-        
         // PreFinalize
         Log.Debug($"[PF YES/NO] YesNo dialog closing. yesClicked: {yesClicked}");
         DisableAndDisposeHook();
-        // Reset the yes clicked flag
         yesClicked = false;
     }
 
