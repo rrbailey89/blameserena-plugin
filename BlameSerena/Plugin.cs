@@ -47,6 +47,7 @@ public sealed class Plugin : IDalamudPlugin
     private bool condWindowOpen = false;
     private bool recruitClicked = false;
     private bool yesClicked = false;
+    private bool confirmationShown = false; // Track if confirmation dialog appeared
     private ulong lastListingId = 0;   // for duplicate-send guard
     private ulong lastDutyId = 0;
     private int lastCommentHash = 0;
@@ -162,6 +163,10 @@ public sealed class Plugin : IDalamudPlugin
     // Handler for Recruit button clicks
     private unsafe void OnButtonClickDetected()
     {
+        // Set flags for new recruit attempt
+        recruitClicked = true;
+        yesClicked = false; // reset from previous run
+        confirmationShown = false;
         Log.Debug("[OnButtonClickDetected] Recruit button click intercepted!");
         var agent = AgentLookingForGroup.Instance();
         if (agent != null)
@@ -173,7 +178,6 @@ public sealed class Plugin : IDalamudPlugin
             tempFlags = (byte)r.DutyFinderSettingFlags;
             Log.Debug($"[OnButtonClickDetected] Stored PF data: DutyId={tempDutyId}, Comment='{tempComment}', PwdState={tempPwdState}, Flags={tempFlags}");
         }
-        recruitClicked = true;
     }
 
     // Handler for Yes button clicks in confirmation dialog
@@ -269,12 +273,14 @@ public sealed class Plugin : IDalamudPlugin
         DisableAndDisposeHook();
         // Lazily unregister YesNo dialog listeners
         AddonLifecycle.UnregisterListener(OnYesNoDialog);
-        if (!recruitClicked)
+        // If confirmation dialog was shown but not confirmed, skip send
+        if (confirmationShown && !yesClicked)
         {
-            Log.Debug("[PF COND WINDOW] PreFinalize: Recruit button was not clicked. Resetting recruitClicked and returning.");
-            recruitClicked = false; // Reset just to be safe
-            return;
+            Log.Debug("[PF COND WINDOW] Recruit canceled by user. Skipping send.");
+            recruitClicked = false;
         }
+        if (!recruitClicked)
+            return; // nothing to do
         recruitClicked = false; // Reset immediately after checking
         var agent = AgentLookingForGroup.Instance();
         ulong currentOwnListingId = (agent != null) ? agent->OwnListingId : 0;
@@ -335,6 +341,7 @@ public sealed class Plugin : IDalamudPlugin
         var addonPtr = args.Addon;
         if (ev == AddonEvent.PostSetup)
         {
+            confirmationShown = true; // Mark that dialog appeared
             var yesno = (AtkUnitBase*)addonPtr;
             var message = GetYesNoMessage(yesno);
             if (!(message.Contains("You cannot carry out the selected objective with", StringComparison.OrdinalIgnoreCase) &&
