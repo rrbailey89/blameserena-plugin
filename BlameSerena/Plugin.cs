@@ -169,17 +169,7 @@ public sealed class Plugin : IDalamudPlugin
         yesClicked = false; // reset from previous run
         confirmationShown = false;
         Log.Debug("[OnButtonClickDetected] Recruit button click intercepted!");
-        var agent = AgentLookingForGroup.Instance();
-        if (agent != null)
-        {
-            var r = agent->StoredRecruitmentInfo;
-            tempDutyId = r.SelectedDutyId;
-            tempComment = r.CommentString;
-            tempPwdState = r.Password;
-            tempFlags = (byte)r.DutyFinderSettingFlags;
-            var category = GetCategoryFromDuty(tempDutyId);
-            Log.Debug($"[OnButtonClickDetected] Stored PF data: DutyId={tempDutyId}, Comment='{tempComment}', PwdState={tempPwdState}, Flags={tempFlags}, Category={category}");
-        }
+        // No longer read agent->StoredRecruitmentInfo here
     }
 
     // Lookup category from ContentFinderCondition sheet
@@ -295,6 +285,16 @@ public sealed class Plugin : IDalamudPlugin
             return; // nothing to do
         recruitClicked = false; // Reset immediately after checking
         var agent = AgentLookingForGroup.Instance();
+        if (agent != null)
+        {
+            var r = agent->StoredRecruitmentInfo;
+            tempDutyId = r.SelectedDutyId;
+            tempComment = r.CommentString;
+            tempPwdState = r.Password;
+            tempFlags = (byte)r.DutyFinderSettingFlags;
+            var category = GetCategoryFromDuty(tempDutyId);
+            Log.Debug($"[OnButtonClickDetected] Stored PF data: DutyId={tempDutyId}, Comment='{tempComment}', PwdState={tempPwdState}, Flags={tempFlags}, Category={category}");
+        }
         ulong currentOwnListingId = (agent != null) ? agent->OwnListingId : 0;
         int tempCommentHash = tempComment.GetHashCode();
         // Duplicate guard: check against last sent values
