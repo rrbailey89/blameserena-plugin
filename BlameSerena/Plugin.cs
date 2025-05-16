@@ -385,22 +385,11 @@ public sealed class Plugin : IDalamudPlugin
         var playerName = ClientState.LocalPlayer?.Name.TextValue ?? "Unknown Player";
         string finalPasswordToSend = string.Empty;
 
-        // Correct password logic: only send config password if UI password is enabled and config is set
-        bool isUiPasswordProtectionEnabled = (gamePasswordState != 10000);
-        string configPassword = Configuration.PartyFinderPassword?.Trim('\0') ?? string.Empty;
-
-        if (isUiPasswordProtectionEnabled)
+        // Use the password from the UI only
+        if (gamePasswordState != 10000)
         {
-            if (!string.IsNullOrEmpty(configPassword)) // Changed from IsNullOrWhiteSpace to IsNullOrEmpty after trimming nulls
-            {
-                finalPasswordToSend = configPassword; // Use the trimmed version
-                Log.Debug("[DEBUG PROCESS] PF has password enabled in UI. Using password from plugin config: '{0}'", finalPasswordToSend);
-            }
-            else
-            {
-                finalPasswordToSend = string.Empty;
-                Log.Debug("[DEBUG PROCESS] PF has password enabled in UI, but plugin config password is blank. Sending blank password.");
-            }
+            finalPasswordToSend = gamePasswordState.ToString("D4"); // Always 4 digits
+            Log.Debug("[DEBUG PROCESS] Using password from PF UI: '{0}'", finalPasswordToSend);
         }
         else
         {

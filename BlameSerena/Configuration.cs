@@ -18,12 +18,6 @@ public class Configuration : IPluginConfiguration
     public ulong RoleId { get; set; } = 0;
     public bool EnableNotifications { get; set; } = false;
 
-    // Party Finder additional fields
-    /// <summary>
-    /// The password for the party finder listing.
-    /// </summary>
-    public string PartyFinderPassword { get; set; } = string.Empty;
-
     // the below exist just to make saving less cumbersome
     public void Save()
     {

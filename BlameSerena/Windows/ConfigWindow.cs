@@ -135,19 +135,5 @@ public class ConfigWindow : Window, IDisposable
                 configuration.Save();
             }
         }
-
-        // Party Finder Password
-        string pfPassword = configuration.PartyFinderPassword ?? string.Empty;
-        if (ImGui.InputText("Party Finder Password", ref pfPassword, 64))
-        {
-            if (pfPassword != configuration.PartyFinderPassword)
-            {
-                configuration.PartyFinderPassword = pfPassword;
-                configuration.Save();
-                // Optional: Add debug log
-                // Dalamud.Plugin.PluginLog.Debug($"[ConfigWindow] PartyFinderPassword updated to: '{(string.IsNullOrEmpty(pfPassword) ? "<empty>" : pfPassword)}'");
-            }
-        }
-
     }
 }
