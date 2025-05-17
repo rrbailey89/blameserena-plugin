@@ -376,7 +376,6 @@ public sealed class Plugin : IDalamudPlugin
         payloadConfirmAction = onConfirm;
         payloadCancelAction = onCancel;
         showPayloadConfirmPopup = true;
-        ImGui.OpenPopup("Confirm Payload Send");
     }
 
     private void ProcessAndNotifyStoredListing(string dutyName, string description, ushort gamePasswordState, byte dutyFinderSettings, string category)
