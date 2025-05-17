@@ -144,15 +144,6 @@ public sealed class Plugin : IDalamudPlugin
     private void DrawUI() => WindowSystem.Draw();
     public void ToggleConfigUI() => ConfigWindow.Toggle();
 
-    // Method to determine if a job is DoW/DoM
-    // No longer needed as the game handles this check automatically
-    // Keeping the method declaration in case it's used elsewhere
-    private bool IsDoWorDoM(uint classJobId)
-    {
-        // This would contain the logic to check if a class/job is DoW/DoM
-        // For example, DoW/DoM jobs typically have IDs 1-38
-        return classJobId <= 38;
-    }
 
     // --- New event-driven PF logic with AtkEventListener ---
 
@@ -279,12 +270,11 @@ public sealed class Plugin : IDalamudPlugin
         {
             var r = agent->StoredRecruitmentInfo;
             tempDutyId = r.SelectedDutyId;
-            if (r.CommentString.Length > 0)
-                tempComment = r.CommentString.ToString();
-            else
-                tempComment = string.Empty;
+            tempComment = !string.IsNullOrEmpty(r.CommentString) ? r.CommentString : string.Empty;
             tempPwdState = r.Password;
             tempFlags = (byte)r.DutyFinderSettingFlags;
+            var categoryName = GetDutyCategory(tempDutyId);
+            Log.Debug($"Category = '{categoryName}'");
             Log.Debug($"[OnCondWindow:PreFinalize] Stored PF data: DutyId={tempDutyId}, Comment='{tempComment}', PwdState={tempPwdState}, Flags={tempFlags}");
         }
         int tempCommentHash = tempComment.GetHashCode();
@@ -301,13 +291,44 @@ public sealed class Plugin : IDalamudPlugin
             Log.Warning($"[PF COND WINDOW] PreFinalize: Could not get duty name for Duty ID {tempDutyId}. Using raw ID as fallback.");
             dutyName = $"Duty ID {tempDutyId}";
         }
+        var category = GetDutyCategory(tempDutyId);
+        Log.Debug($"Category = '{category}'");
         Log.Debug($"[PF COND WINDOW] PreFinalize: Processing listing. DutyName: '{dutyName}', Comment: '{tempComment}', PwdState: {tempPwdState}, Flags: {tempFlags}");
-        ProcessAndNotifyStoredListing(dutyName, tempComment, tempPwdState, tempFlags);
+        ProcessAndNotifyStoredListing(dutyName, tempComment, tempPwdState, tempFlags, category);
         lastDutyId = tempDutyId;
         lastCommentHash = tempCommentHash;
         if (currentOwnListingId != 0)
             lastListingId = currentOwnListingId;
         Log.Debug($"[PF COND WINDOW] PreFinalize: Updated last sent values. LastLID: {lastListingId}, LastDutyID: {lastDutyId}, LastCommentHash: {lastCommentHash}");
+    }
+
+    private void ProcessAndNotifyStoredListing(string dutyName, string description, ushort gamePasswordState, byte dutyFinderSettings, string category)
+    {
+        Log.Debug($"[DEBUG PROCESS] ProcessAndNotifyStoredListing called. Duty: '{dutyName}', Desc: '{description}', PassState: {gamePasswordState}, Settings: {dutyFinderSettings}, Category: '{category}'");
+
+        if (!Configuration.EnableNotifications || Configuration.TargetChannelId == 0 || string.IsNullOrEmpty(Configuration.BotApiEndpoint))
+        {
+            Log.Debug("[DEBUG PROCESS] Notifications disabled or config missing. Skipping.");
+            return;
+        }
+
+        var playerName = ClientState.LocalPlayer?.Name.TextValue ?? "Unknown Player";
+        string finalPasswordToSend = string.Empty;
+
+        // Use the password from the UI only
+        if (gamePasswordState != 10000)
+        {
+            finalPasswordToSend = gamePasswordState.ToString("D4"); // Always 4 digits
+            Log.Debug("[DEBUG PROCESS] Using password from PF UI: '{0}'", finalPasswordToSend);
+        }
+        else
+        {
+            finalPasswordToSend = string.Empty;
+            Log.Debug("[DEBUG PROCESS] PF has password disabled in UI. Sending blank password.");
+        }
+
+        Log.Debug($"[DEBUG PROCESS] Preparing to send notification. Player: {playerName}, Duty: {dutyName}, Desc: {description}, Category: {category}, PasswordToSend: '{finalPasswordToSend}'");
+        _ = SendPartyFinderNotificationAsync(playerName, dutyName, description, finalPasswordToSend, Configuration.TargetChannelId, Configuration.RoleId, Configuration.BotApiEndpoint, category);
     }
 
     // Utility to extract and sanitize the Yes/No dialog message
@@ -320,7 +341,7 @@ public sealed class Plugin : IDalamudPlugin
 
             var t = (AtkTextNode*)node;
             var s = t->NodeText;
-            if (s.Length == 0) continue;
+            if (!HasText(s)) continue;
 
             return Sanitize(s.ToString());
         }
@@ -405,44 +426,33 @@ public sealed class Plugin : IDalamudPlugin
         return name;
     }
 
-    // --- Unchanged notification/HTTP/config logic below ---
-
-    private void ProcessAndNotifyStoredListing(string dutyName, string description, ushort gamePasswordState, byte dutyFinderSettings)
+    // Duty-category detection
+    private string GetDutyCategory(ushort dutyId)
     {
-        Log.Debug($"[DEBUG PROCESS] ProcessAndNotifyStoredListing called. Duty: '{dutyName}', Desc: '{description}', PassState: {gamePasswordState}, Settings: {dutyFinderSettings}");
+        var cfcSheet = DataManager.GetExcelSheet<Lumina.Excel.Sheets.ContentFinderCondition>();
+        var cfcRow = cfcSheet?.GetRow(dutyId);
+        var name = cfcRow?.ContentType.Value.Name.ToString();
 
-        if (!Configuration.EnableNotifications || Configuration.TargetChannelId == 0 || string.IsNullOrEmpty(Configuration.BotApiEndpoint))
-        {
-            Log.Debug("[DEBUG PROCESS] Notifications disabled or config missing. Skipping.");
-            return;
-        }
-
-        var playerName = ClientState.LocalPlayer?.Name.TextValue ?? "Unknown Player";
-        string finalPasswordToSend = string.Empty;
-
-        // Use the password from the UI only
-        if (gamePasswordState != 10000)
-        {
-            finalPasswordToSend = gamePasswordState.ToString("D4"); // Always 4 digits
-            Log.Debug("[DEBUG PROCESS] Using password from PF UI: '{0}'", finalPasswordToSend);
-        }
-        else
-        {
-            finalPasswordToSend = string.Empty;
-            Log.Debug("[DEBUG PROCESS] PF has password disabled in UI. Sending blank password.");
-        }
-
-        Log.Debug($"[DEBUG PROCESS] Preparing to send notification. Player: {playerName}, Duty: {dutyName}, Desc: {description}, PasswordToSend: '{finalPasswordToSend}'");
-        _ = SendPartyFinderNotificationAsync(playerName, dutyName, description, finalPasswordToSend, Configuration.TargetChannelId, Configuration.RoleId, Configuration.BotApiEndpoint);
+        return string.IsNullOrEmpty(name) ? "Other" : name;
     }
 
-    private async Task SendPartyFinderNotificationAsync(string playerName, string dutyName, string description, string partyFinderPassword, ulong channelId, ulong roleId, string apiEndpoint)
+    // Safe Utf8String guard
+    private static bool HasText(FFXIVClientStructs.FFXIV.Client.System.String.Utf8String u) =>
+        u.StringPtr != null && u.BufUsed > 1;
+
+    // Safe string guard
+    private static bool HasText(string s) => !string.IsNullOrEmpty(s);
+
+    // --- Unchanged notification/HTTP/config logic below ---
+
+
+    private async Task SendPartyFinderNotificationAsync(string playerName, string dutyName, string description, string partyFinderPassword, ulong channelId, ulong roleId, string apiEndpoint, string category)
     {
         try
         {
             using var httpClient = new HttpClient();
             httpClient.Timeout = TimeSpan.FromSeconds(15);
-            var payload = new { PlayerName = playerName, DutyName = dutyName, Description = description, PartyFinderPassword = partyFinderPassword, ChannelId = channelId, RoleId = roleId };
+            var payload = new { PlayerName = playerName, DutyName = dutyName, Description = description, Category = category, PartyFinderPassword = partyFinderPassword, ChannelId = channelId, RoleId = roleId };
             var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = false });
             var content = new StringContent(json, Encoding.UTF8, "application/json");
             Log.Information($"[HTTP SEND] Attempting to send PF notification. Payload: {json}");

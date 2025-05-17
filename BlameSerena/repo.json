@@ -14,10 +14,10 @@
     "DownloadCount": 28,
     "DownloadLinkInstall": "https://github.com/rrbailey89/blameserena-plugin/releases/latest/download/BlameSerena.zip",
     "DownloadLinkUpdate": "https://github.com/rrbailey89/blameserena-plugin/releases/latest/download/BlameSerena.zip",
-    "AssemblyVersion": "1.0.0.13",
+    "AssemblyVersion": "1.0.0.14",
     "ApplicableVersion": "any",
     "DalamudApiLevel": 12,
-    "Changelog": "Version 1.0.0.13: Utf8String safety, hook pointer cleanup, and bugfixes.",
+    "Changelog": "Version 1.0.0.14: Utf8String safety, hook pointer cleanup, and bugfixes.",
     "DownloadLinkTesting": "",
     "IconUrl": "https://raw.githubusercontent.com/rrbailey89/blameserena-plugin/master/Data/logo.png"
   }
