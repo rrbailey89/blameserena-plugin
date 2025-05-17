@@ -14,10 +14,10 @@
     "DownloadCount": 25,
     "DownloadLinkInstall": "https://github.com/rrbailey89/blameserena-plugin/releases/latest/download/BlameSerena.zip",
     "DownloadLinkUpdate": "https://github.com/rrbailey89/blameserena-plugin/releases/latest/download/BlameSerena.zip",
-    "AssemblyVersion": "1.0.0.15",
+    "AssemblyVersion": "1.0.0.16",
     "ApplicableVersion": "any",
     "DalamudApiLevel": 12,
-    "Changelog": "Version 1.0.0.15: Reflection caching, error logging, UI/HTTP thread safety, and bugfixes.",
+    "Changelog": "Version 1.0.0.16: Version bump and config UI fixes.",
     "DownloadLinkTesting": "",
     "IconUrl": "https://raw.githubusercontent.com/rrbailey89/blameserena-plugin/master/Data/logo.png"
   }

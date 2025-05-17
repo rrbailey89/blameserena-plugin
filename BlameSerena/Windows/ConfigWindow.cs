@@ -2,6 +2,7 @@
 using System.Numerics;
 using Dalamud.Interface.Windowing;
 using ImGuiNET;
+using BlameSerena;
 
 namespace BlameSerena.Windows;
 
@@ -88,6 +89,15 @@ public class ConfigWindow : Window, IDisposable
         if (ImGui.Checkbox("Enable Party Finder Notifications", ref enableNotifications))
         {
             configuration.EnableNotifications = enableNotifications;
+            configuration.Save();
+        }
+
+        // Payload confirmation preference
+        var payloadOptions = new[] { "Ask Every Time", "Always Send", "Never Send" };
+        int selectedPayloadOption = (int)configuration.SendPayloadConfirmation;
+        if (ImGui.Combo("Payload Confirmation", ref selectedPayloadOption, payloadOptions, payloadOptions.Length))
+        {
+            configuration.SendPayloadConfirmation = (PayloadSendPreference)selectedPayloadOption;
             configuration.Save();
         }
 

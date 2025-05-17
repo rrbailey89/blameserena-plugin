@@ -1,4 +1,5 @@
 ﻿using System;
+using ImGuiNET;
 using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Game.Command;
@@ -141,7 +142,43 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OnBlameSerenaMainUi() => MainWindow.Toggle();
 
-    private void DrawUI() => WindowSystem.Draw();
+    private void DrawUI()
+    {
+        // Prevent popup re-entrance if PF window is closed
+        if (!condWindowOpen && showPayloadConfirmPopup)
+            showPayloadConfirmPopup = false;
+
+        // Draw the custom confirmation popup if needed
+        if (showPayloadConfirmPopup)
+        {
+            ImGui.SetNextWindowSize(new System.Numerics.Vector2(400, 0), ImGuiCond.Always);
+            ImGui.OpenPopup("Confirm Payload Send");
+            if (ImGui.BeginPopupModal("Confirm Payload Send", ref showPayloadConfirmPopup, ImGuiWindowFlags.AlwaysAutoResize))
+            {
+                ImGui.TextWrapped("Do you want to send the Party Finder details to the configured endpoint?");
+                ImGui.Spacing();
+                if (ImGui.Button("Send", new System.Numerics.Vector2(120, 0)))
+                {
+                    showPayloadConfirmPopup = false;
+                    payloadConfirmAction?.Invoke();
+                    payloadConfirmAction = null;
+                    payloadCancelAction = null;
+                    ImGui.CloseCurrentPopup();
+                }
+                ImGui.SameLine();
+                if (ImGui.Button("Don't Send", new System.Numerics.Vector2(120, 0)))
+                {
+                    showPayloadConfirmPopup = false;
+                    payloadCancelAction?.Invoke();
+                    payloadConfirmAction = null;
+                    payloadCancelAction = null;
+                    ImGui.CloseCurrentPopup();
+                }
+                ImGui.EndPopup();
+            }
+        }
+        WindowSystem.Draw();
+    }
     public void ToggleConfigUI() => ConfigWindow.Toggle();
 
 
@@ -189,6 +226,8 @@ public sealed class Plugin : IDalamudPlugin
         if (buttonHook == null || hookedVTablePtr != recvPtr)
         {
             buttonHook?.Disable();
+            buttonHook?.Dispose();
+            buttonHook = null;
             buttonHook = HookProvider.HookFromAddress<ReceiveEventDelegate>(recvPtr, ButtonDetour);
             buttonHook.Enable();
             hookedVTablePtr = recvPtr;
@@ -270,7 +309,7 @@ public sealed class Plugin : IDalamudPlugin
         {
             var r = agent->StoredRecruitmentInfo;
             tempDutyId = r.SelectedDutyId;
-            tempComment = !string.IsNullOrEmpty(r.CommentString) ? r.CommentString : string.Empty;
+            tempComment = HasText(r.CommentString) ? r.CommentString.ToString() : string.Empty;
             tempPwdState = r.Password;
             tempFlags = (byte)r.DutyFinderSettingFlags;
             var categoryName = GetDutyCategory(tempDutyId);
@@ -294,12 +333,50 @@ public sealed class Plugin : IDalamudPlugin
         var category = GetDutyCategory(tempDutyId);
         Log.Debug($"Category = '{category}'");
         Log.Debug($"[PF COND WINDOW] PreFinalize: Processing listing. DutyName: '{dutyName}', Comment: '{tempComment}', PwdState: {tempPwdState}, Flags: {tempFlags}");
-        ProcessAndNotifyStoredListing(dutyName, tempComment, tempPwdState, tempFlags, category);
+
+        // New: Handle user preference for payload confirmation
+        switch (Configuration.SendPayloadConfirmation)
+        {
+            case PayloadSendPreference.AlwaysSend:
+                ProcessAndNotifyStoredListing(dutyName, tempComment, tempPwdState, tempFlags, category);
+                break;
+            case PayloadSendPreference.NeverSend:
+                Log.Debug("[PF COND WINDOW] User preference set to NeverSend. Skipping payload.");
+                break;
+            case PayloadSendPreference.AskEveryTime:
+            default:
+                // Capture variables for closure
+                string capturedDutyName = dutyName;
+                string capturedComment = tempComment;
+                ushort capturedPwdState = tempPwdState;
+                byte capturedFlags = tempFlags;
+                string capturedCategory = category;
+
+                ShowPayloadConfirmationPopup(
+                    () => ProcessAndNotifyStoredListing(capturedDutyName, capturedComment, capturedPwdState, capturedFlags, capturedCategory),
+                    () => Log.Debug("[PF COND WINDOW] User chose not to send payload via popup.")
+                );
+                break;
+        }
+
         lastDutyId = tempDutyId;
         lastCommentHash = tempCommentHash;
         if (currentOwnListingId != 0)
             lastListingId = currentOwnListingId;
         Log.Debug($"[PF COND WINDOW] PreFinalize: Updated last sent values. LastLID: {lastListingId}, LastDutyID: {lastDutyId}, LastCommentHash: {lastCommentHash}");
+    }
+
+    // --- Custom ImGui confirmation popup state ---
+    private bool showPayloadConfirmPopup = false;
+    private Action? payloadConfirmAction = null;
+    private Action? payloadCancelAction = null;
+
+    private void ShowPayloadConfirmationPopup(Action onConfirm, Action onCancel)
+    {
+        payloadConfirmAction = onConfirm;
+        payloadCancelAction = onCancel;
+        showPayloadConfirmPopup = true;
+        ImGui.OpenPopup("Confirm Payload Send");
     }
 
     private void ProcessAndNotifyStoredListing(string dutyName, string description, ushort gamePasswordState, byte dutyFinderSettings, string category)
@@ -328,7 +405,7 @@ public sealed class Plugin : IDalamudPlugin
         }
 
         Log.Debug($"[DEBUG PROCESS] Preparing to send notification. Player: {playerName}, Duty: {dutyName}, Desc: {description}, Category: {category}, PasswordToSend: '{finalPasswordToSend}'");
-        _ = SendPartyFinderNotificationAsync(playerName, dutyName, description, finalPasswordToSend, Configuration.TargetChannelId, Configuration.RoleId, Configuration.BotApiEndpoint, category);
+        _ = SendPartyFinderNotificationAsync(playerName, dutyName, description, finalPasswordToSend, Configuration.TargetChannelId, Configuration.RoleId, Configuration.BotApiEndpoint, category).ConfigureAwait(false);
     }
 
     // Utility to extract and sanitize the Yes/No dialog message
@@ -427,14 +504,75 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     // Duty-category detection
-    private string GetDutyCategory(ushort dutyId)
-    {
-        var cfcSheet = DataManager.GetExcelSheet<Lumina.Excel.Sheets.ContentFinderCondition>();
-        var cfcRow = cfcSheet?.GetRow(dutyId);
-        var name = cfcRow?.ContentType.Value.Name.ToString();
+private static readonly System.Reflection.PropertyInfo? CtProp =
+    typeof(Lumina.Excel.Sheets.ContentFinderCondition).GetProperty("ContentType");
+private static readonly System.Reflection.PropertyInfo? CtValueProp =
+    CtProp?.PropertyType.GetProperty("Value");
+private static readonly System.Reflection.PropertyInfo? CtNameProp =
+    CtValueProp?.PropertyType.GetProperty("Name");
+private static readonly System.Reflection.PropertyInfo? CtNameDirectProp =
+    CtProp?.PropertyType.GetProperty("Name");
 
-        return string.IsNullOrEmpty(name) ? "Other" : name;
+private string GetDutyCategory(ushort dutyId)
+{
+    var cfcRow = DataManager
+        .GetExcelSheet<Lumina.Excel.Sheets.ContentFinderCondition>()?
+        .GetRow(dutyId);
+
+    if (cfcRow == null)
+        return "Other";
+
+    try
+    {
+        if (CtProp != null)
+        {
+            var contentTypeValue = CtProp.GetValue(cfcRow);
+            if (contentTypeValue != null)
+            {
+                // Try .Value?.Name
+                if (CtValueProp != null)
+                {
+                    var valueObj = CtValueProp.GetValue(contentTypeValue);
+                    if (valueObj != null && CtNameProp != null)
+                    {
+                        var nameObj = CtNameProp.GetValue(valueObj);
+                        if (nameObj != null)
+                        {
+                            var nameStr = nameObj.ToString();
+                            if (!string.IsNullOrEmpty(nameStr))
+                                return nameStr;
+                        }
+                    }
+                }
+                // Try .Name directly
+                if (CtNameDirectProp != null)
+                {
+                    var nameObj = CtNameDirectProp.GetValue(contentTypeValue);
+                    if (nameObj != null)
+                    {
+                        var nameStr = nameObj.ToString();
+                        if (!string.IsNullOrEmpty(nameStr))
+                            return nameStr;
+                    }
+                }
+            }
+        }
+        // If ContentType is an int or enum, just return its value as string
+        if (CtProp != null)
+        {
+            var intVal = CtProp.GetValue(cfcRow);
+            if (intVal != null && intVal is int ctInt && ctInt != 0)
+                return ctInt.ToString();
+        }
     }
+    catch (Exception ex)
+    {
+        Log.Error(ex, "ContentType reflection");
+    }
+
+    return "Other";
+}
+
 
     // Safe Utf8String guard
     private static bool HasText(FFXIVClientStructs.FFXIV.Client.System.String.Utf8String u) =>

@@ -4,6 +4,13 @@ using System;
 
 namespace BlameSerena;
 
+public enum PayloadSendPreference
+{
+    AskEveryTime,
+    AlwaysSend,
+    NeverSend
+}
+
 [Serializable]
 public class Configuration : IPluginConfiguration
 {
@@ -17,6 +24,9 @@ public class Configuration : IPluginConfiguration
     public ulong TargetChannelId { get; set; } = 0;
     public ulong RoleId { get; set; } = 0;
     public bool EnableNotifications { get; set; } = false;
+
+    // New: User preference for payload confirmation
+    public PayloadSendPreference SendPayloadConfirmation { get; set; } = PayloadSendPreference.AskEveryTime;
 
     // the below exist just to make saving less cumbersome
     public void Save()
