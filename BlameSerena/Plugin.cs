@@ -144,39 +144,43 @@ public sealed class Plugin : IDalamudPlugin
 
     private void DrawUI()
     {
-        // Prevent popup re-entrance if PF window is closed
-        if (!condWindowOpen && showPayloadConfirmPopup)
+        // Don’t cancel the popup if one is waiting to be shown
+        if (!condWindowOpen && showPayloadConfirmPopup && payloadConfirmAction == null)
             showPayloadConfirmPopup = false;
 
-        // Draw the custom confirmation popup if needed
         if (showPayloadConfirmPopup)
         {
             ImGui.SetNextWindowSize(new System.Numerics.Vector2(400, 0), ImGuiCond.Always);
             ImGui.OpenPopup("Confirm Payload Send");
-            if (ImGui.BeginPopupModal("Confirm Payload Send", ref showPayloadConfirmPopup, ImGuiWindowFlags.AlwaysAutoResize))
+
+            if (ImGui.BeginPopupModal("Confirm Payload Send",
+                                       ref showPayloadConfirmPopup,
+                                       ImGuiWindowFlags.AlwaysAutoResize))
             {
                 ImGui.TextWrapped("Do you want to send the Party Finder details to the configured endpoint?");
                 ImGui.Spacing();
+
                 if (ImGui.Button("Send", new System.Numerics.Vector2(120, 0)))
                 {
                     showPayloadConfirmPopup = false;
                     payloadConfirmAction?.Invoke();
                     payloadConfirmAction = null;
-                    payloadCancelAction = null;
                     ImGui.CloseCurrentPopup();
                 }
+
                 ImGui.SameLine();
+
                 if (ImGui.Button("Don't Send", new System.Numerics.Vector2(120, 0)))
                 {
                     showPayloadConfirmPopup = false;
                     payloadCancelAction?.Invoke();
                     payloadConfirmAction = null;
-                    payloadCancelAction = null;
                     ImGui.CloseCurrentPopup();
                 }
                 ImGui.EndPopup();
             }
         }
+
         WindowSystem.Draw();
     }
     public void ToggleConfigUI() => ConfigWindow.Toggle();
