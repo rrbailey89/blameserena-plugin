@@ -55,6 +55,8 @@ public class ConfigWindow : Window, IDisposable
     private byte[] roleIdBuffer = new byte[32];
     private string lastChannelIdStr = string.Empty;
     private string lastRoleIdStr = string.Empty;
+    private bool updateChannelIdBuffer = true;
+    private bool updateRoleIdBuffer = true;
 
     public override void Draw()
     {
@@ -123,12 +125,13 @@ public class ConfigWindow : Window, IDisposable
 
         // Target Channel ID
         var channelIdStr = configuration.TargetChannelId == 0 ? "" : configuration.TargetChannelId.ToString();
-        if (channelIdStr != lastChannelIdStr)
+        if (updateChannelIdBuffer)
         {
             Array.Clear(channelIdBuffer, 0, channelIdBuffer.Length);
             var channelIdBytes = System.Text.Encoding.UTF8.GetBytes(channelIdStr);
             Array.Copy(channelIdBytes, channelIdBuffer, Math.Min(channelIdBytes.Length, channelIdBuffer.Length - 1));
             lastChannelIdStr = channelIdStr;
+            updateChannelIdBuffer = false;
         }
         if (ImGui.InputText("Discord Channel ID", channelIdBuffer, (uint)channelIdBuffer.Length, ImGuiInputTextFlags.CharsDecimal))
         {
@@ -139,24 +142,27 @@ public class ConfigWindow : Window, IDisposable
                 {
                     configuration.TargetChannelId = 0;
                     configuration.Save();
+                    updateChannelIdBuffer = true;
                 }
             }
             else if (ulong.TryParse(newChannelIdStr, out var newChannelId) && newChannelId != configuration.TargetChannelId)
             {
                 configuration.TargetChannelId = newChannelId;
                 configuration.Save();
+                updateChannelIdBuffer = true;
             }
             lastChannelIdStr = newChannelIdStr;
         }
 
         // Discord Role ID
         var roleIdStr = configuration.RoleId == 0 ? "" : configuration.RoleId.ToString();
-        if (roleIdStr != lastRoleIdStr)
+        if (updateRoleIdBuffer)
         {
             Array.Clear(roleIdBuffer, 0, roleIdBuffer.Length);
             var roleIdBytes = System.Text.Encoding.UTF8.GetBytes(roleIdStr);
             Array.Copy(roleIdBytes, roleIdBuffer, Math.Min(roleIdBytes.Length, roleIdBuffer.Length - 1));
             lastRoleIdStr = roleIdStr;
+            updateRoleIdBuffer = false;
         }
         if (ImGui.InputText("Discord Role ID", roleIdBuffer, (uint)roleIdBuffer.Length, ImGuiInputTextFlags.CharsDecimal))
         {
@@ -167,12 +173,14 @@ public class ConfigWindow : Window, IDisposable
                 {
                     configuration.RoleId = 0;
                     configuration.Save();
+                    updateRoleIdBuffer = true;
                 }
             }
             else if (ulong.TryParse(newRoleIdStr, out var newRoleId) && newRoleId != configuration.RoleId)
             {
                 configuration.RoleId = newRoleId;
                 configuration.Save();
+                updateRoleIdBuffer = true;
             }
             lastRoleIdStr = newRoleIdStr;
         }
