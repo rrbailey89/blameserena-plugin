@@ -124,7 +124,15 @@ public class ConfigWindow : Window, IDisposable
         if (ImGui.InputText("Discord Channel ID", channelIdBuffer, (uint)channelIdBuffer.Length, ImGuiInputTextFlags.CharsDecimal))
         {
             var newChannelIdStr = System.Text.Encoding.UTF8.GetString(channelIdBuffer).TrimEnd('\0');
-            if (ulong.TryParse(newChannelIdStr, out var newChannelId) && newChannelId != configuration.TargetChannelId)
+            if (string.IsNullOrWhiteSpace(newChannelIdStr))
+            {
+                if (configuration.TargetChannelId != 0)
+                {
+                    configuration.TargetChannelId = 0;
+                    configuration.Save();
+                }
+            }
+            else if (ulong.TryParse(newChannelIdStr, out var newChannelId) && newChannelId != configuration.TargetChannelId)
             {
                 configuration.TargetChannelId = newChannelId;
                 configuration.Save();
@@ -139,7 +147,15 @@ public class ConfigWindow : Window, IDisposable
         if (ImGui.InputText("Discord Role ID", roleIdBuffer, (uint)roleIdBuffer.Length, ImGuiInputTextFlags.CharsDecimal))
         {
             var newRoleIdStr = System.Text.Encoding.UTF8.GetString(roleIdBuffer).TrimEnd('\0');
-            if (ulong.TryParse(newRoleIdStr, out var newRoleId) && newRoleId != configuration.RoleId)
+            if (string.IsNullOrWhiteSpace(newRoleIdStr))
+            {
+                if (configuration.RoleId != 0)
+                {
+                    configuration.RoleId = 0;
+                    configuration.Save();
+                }
+            }
+            else if (ulong.TryParse(newRoleIdStr, out var newRoleId) && newRoleId != configuration.RoleId)
             {
                 configuration.RoleId = newRoleId;
                 configuration.Save();
