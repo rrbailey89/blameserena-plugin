@@ -14,10 +14,10 @@
     "DownloadCount": 27,
     "DownloadLinkInstall": "https://github.com/rrbailey89/blameserena-plugin/releases/latest/download/BlameSerena.zip",
     "DownloadLinkUpdate": "https://github.com/rrbailey89/blameserena-plugin/releases/latest/download/BlameSerena.zip",
-    "AssemblyVersion": "1.0.0.21",
+    "AssemblyVersion": "2.0.0.0",
     "ApplicableVersion": "any",
-    "DalamudApiLevel": 12,
-    "Changelog": "Version 1.0.0.19: Version bump and minimal config window fix.",
+    "DalamudApiLevel": 13,
+    "Changelog": "Version 2.0.0.0: Major update for Dalamud API v13 compatibility. Updated ImGui namespaces, fixed pointer handling, and resolved API breaking changes.",
     "DownloadLinkTesting": "",
     "IconUrl": "https://raw.githubusercontent.com/rrbailey89/blameserena-plugin/master/Data/logo.png"
   }

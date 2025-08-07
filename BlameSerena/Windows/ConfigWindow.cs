@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Numerics;
 using Dalamud.Interface.Windowing;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using BlameSerena;
 
 namespace BlameSerena.Windows;
@@ -72,7 +72,7 @@ public class ConfigWindow : Window, IDisposable
             float imageWidth = logo.Width;
             float rightAlign = windowWidth - imageWidth - 10.0f; // 10px padding from right
             ImGui.SetCursorPos(new Vector2(rightAlign > 0 ? rightAlign : 0, oldCursorPos.Y));
-            ImGui.Image(logo.ImGuiHandle, new Vector2(logo.Width, logo.Height));
+            ImGui.Image(logo.Handle, new Vector2(logo.Width, logo.Height));
             // Restore cursor position so config options start at the top left
             ImGui.SetCursorPos(oldCursorPos);
         }
@@ -113,7 +113,7 @@ public class ConfigWindow : Window, IDisposable
         var apiEndpointBuffer = new byte[256];
         var apiEndpointBytes = System.Text.Encoding.UTF8.GetBytes(apiEndpoint);
         Array.Copy(apiEndpointBytes, apiEndpointBuffer, Math.Min(apiEndpointBytes.Length, apiEndpointBuffer.Length - 1));
-        if (ImGui.InputText("Bot API Endpoint", apiEndpointBuffer, (uint)apiEndpointBuffer.Length))
+        if (ImGui.InputText("Bot API Endpoint", apiEndpointBuffer.AsSpan(), ImGuiInputTextFlags.None))
         {
             var newEndpoint = System.Text.Encoding.UTF8.GetString(apiEndpointBuffer).TrimEnd('\0');
             if (newEndpoint != configuration.BotApiEndpoint)
@@ -133,7 +133,7 @@ public class ConfigWindow : Window, IDisposable
             lastChannelIdStr = channelIdStr;
             updateChannelIdBuffer = false;
         }
-        if (ImGui.InputText("Discord Channel ID", channelIdBuffer, (uint)channelIdBuffer.Length, ImGuiInputTextFlags.CharsDecimal))
+        if (ImGui.InputText("Discord Channel ID", channelIdBuffer.AsSpan(), ImGuiInputTextFlags.CharsDecimal))
         {
             var newChannelIdStr = System.Text.Encoding.UTF8.GetString(channelIdBuffer).TrimEnd('\0');
             if (string.IsNullOrWhiteSpace(newChannelIdStr))
@@ -164,7 +164,7 @@ public class ConfigWindow : Window, IDisposable
             lastRoleIdStr = roleIdStr;
             updateRoleIdBuffer = false;
         }
-        if (ImGui.InputText("Discord Role ID", roleIdBuffer, (uint)roleIdBuffer.Length, ImGuiInputTextFlags.CharsDecimal))
+        if (ImGui.InputText("Discord Role ID", roleIdBuffer.AsSpan(), ImGuiInputTextFlags.CharsDecimal))
         {
             var newRoleIdStr = System.Text.Encoding.UTF8.GetString(roleIdBuffer).TrimEnd('\0');
             if (string.IsNullOrWhiteSpace(newRoleIdStr))

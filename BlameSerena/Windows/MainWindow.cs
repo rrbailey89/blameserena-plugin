@@ -3,7 +3,7 @@ using System.Numerics;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using Lumina.Excel.Sheets;
 
 namespace BlameSerena.Windows;
@@ -54,7 +54,7 @@ public class MainWindow : Window, IDisposable
                 {
                     using (ImRaii.PushIndent(55f))
                     {
-                        ImGui.Image(logo.ImGuiHandle, new Vector2(logo.Width, logo.Height));
+                        ImGui.Image(logo.Handle, new Vector2(logo.Width, logo.Height));
                     }
                 }
                 else

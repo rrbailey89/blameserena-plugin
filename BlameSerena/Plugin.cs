@@ -1,5 +1,5 @@
 ﻿using System;
-using ImGuiNET;
+using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 using Dalamud.Game.Command;
@@ -213,7 +213,7 @@ public sealed class Plugin : IDalamudPlugin
     // Method to hook the Recruit button's event listener
     private unsafe void HookRecruitButton()
     {
-        var addon = (AtkUnitBase*)GameGui.GetAddonByName(LfgCondAddon, 1);
+        var addon = (AtkUnitBase*)GameGui.GetAddonByName(LfgCondAddon, 1).Address;
         if (addon == null) { Log.Error("LFGCond addon not found"); return; }
 
         // 111 is the Recruit button container
@@ -280,7 +280,7 @@ public sealed class Plugin : IDalamudPlugin
     // Handler for LookingForGroupCondition addon events
     private unsafe void OnCondWindow(AddonEvent ev, AddonArgs args)
     {
-        var addonPtr = args.Addon;
+        var addonPtr = (AtkUnitBase*)args.Addon.Address;
         if (ev == AddonEvent.PostSetup)
         {
             Log.Debug($"[PF COND WINDOW] PostSetup for {LfgCondAddon}.");
@@ -438,11 +438,11 @@ public sealed class Plugin : IDalamudPlugin
     // Handler for the YesNo dialog events
     private unsafe void OnYesNoDialog(AddonEvent ev, AddonArgs args)
     {
-        var addonPtr = args.Addon;
+        var addonPtr = (AtkUnitBase*)args.Addon.Address;
         if (ev == AddonEvent.PostSetup)
         {
             confirmationShown = true; // Mark that dialog appeared
-            var yesno = (AtkUnitBase*)addonPtr;
+            var yesno = addonPtr;
             var message = GetYesNoMessage(yesno);
             if (!(message.Contains("You cannot carry out the selected objective with", StringComparison.OrdinalIgnoreCase) &&
                   message.Contains("this party composition. Proceed anyway?", StringComparison.OrdinalIgnoreCase)))
@@ -578,8 +578,8 @@ private string GetDutyCategory(ushort dutyId)
 
 
     // Safe Utf8String guard
-    private static bool HasText(FFXIVClientStructs.FFXIV.Client.System.String.Utf8String u) =>
-        u.StringPtr != null && u.BufUsed > 1;
+    private static unsafe bool HasText(FFXIVClientStructs.FFXIV.Client.System.String.Utf8String u) =>
+        u.StringPtr != (byte*)null && u.BufUsed > 1;
 
     // Safe string guard
     private static bool HasText(string s) => !string.IsNullOrEmpty(s);
