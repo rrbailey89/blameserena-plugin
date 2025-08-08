@@ -23,7 +23,7 @@ jobs:
         git clone --depth 1 https://github.com/goatcorp/dalamud-distrib.git
         $dalamudDir = "$env:APPDATA\XIVLauncher\addon\Hooks\dev"
         mkdir $dalamudDir -Force
-        Copy-Item -Path dalamud-distrib/latest.zip -Destination latest.zip
+        Copy-Item -Path dalamud-distrib/api13/latest.zip -Destination latest.zip
         Expand-Archive -Path latest.zip -DestinationPath $dalamudDir -Force
 
     - name: Build
