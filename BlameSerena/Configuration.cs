@@ -28,6 +28,12 @@ public class Configuration : IPluginConfiguration
     // New: User preference for payload confirmation
     public PayloadSendPreference SendPayloadConfirmation { get; set; } = PayloadSendPreference.AskEveryTime;
 
+    // Blame integration configuration
+    public string BlameApiEndpoint { get; set; } = "http://localhost:3001/api/v1/blame/increment";
+    public string BlameApiKey { get; set; } = "";
+    public bool EnableBlameIntegration { get; set; } = false;
+    public bool ShowBlameConfirmation { get; set; } = true;
+
     // the below exist just to make saving less cumbersome
     public void Save()
     {
