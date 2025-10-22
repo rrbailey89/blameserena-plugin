@@ -5,6 +5,7 @@ using BlameSerena.Models;
 using BlameSerena.Utilities;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
+using Utf8String = FFXIVClientStructs.FFXIV.Client.System.String.Utf8String;
 
 namespace BlameSerena.Services;
 
@@ -18,7 +19,7 @@ public interface IPartyFinderService
     Task ProcessAndNotifyAsync(Configuration config, string playerName);
 }
 
-public unsafe class PartyFinderService : IPartyFinderService
+public class PartyFinderService : IPartyFinderService
 {
     private readonly IPluginLog _log;
     private readonly IDutyDataService _dutyDataService;
@@ -39,7 +40,7 @@ public unsafe class PartyFinderService : IPartyFinderService
     /// <summary>
     /// Capture PF data from StoredRecruitmentInfo
     /// </summary>
-    public void CaptureStoredRecruitmentInfo()
+    public unsafe void CaptureStoredRecruitmentInfo()
     {
         var agent = AgentLookingForGroup.Instance();
         if (agent == null)
@@ -47,7 +48,7 @@ public unsafe class PartyFinderService : IPartyFinderService
 
         var r = agent->StoredRecruitmentInfo;
         State.TempDutyId = r.SelectedDutyId;
-        State.TempComment = GameStructUtilities.HasText(r.CommentString) ? r.CommentString.ToString() : string.Empty;
+        State.TempComment = !string.IsNullOrEmpty(r.CommentString) ? r.CommentString : string.Empty;
         State.TempPwdState = r.Password;
         State.TempFlags = (byte)r.DutyFinderSettingFlags;
 
@@ -61,8 +62,12 @@ public unsafe class PartyFinderService : IPartyFinderService
     /// </summary>
     public async Task ProcessAndNotifyAsync(Configuration config, string playerName)
     {
-        var agent = AgentLookingForGroup.Instance();
-        ulong currentOwnListingId = (agent != null) ? agent->OwnListingId : 0;
+        ulong currentOwnListingId;
+        unsafe
+        {
+            var agent = AgentLookingForGroup.Instance();
+            currentOwnListingId = (agent != null) ? agent->OwnListingId : 0;
+        }
 
         // Duplicate guard
         if (State.IsDuplicateListing(currentOwnListingId))
