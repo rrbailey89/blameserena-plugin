@@ -1,4 +1,7 @@
 ﻿using System;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.Addon.Lifecycle;
 using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
@@ -33,6 +36,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private const string MainWindowCommandName = "/blameserena";
     private const string ConfigWindowCommandName = "/blameserenaconfig";
+    private const string BlameCommandName = "/blame";
 
     public Configuration Configuration { get; init; }
     public readonly WindowSystem WindowSystem = new("BlameSerena");
@@ -86,6 +90,11 @@ public sealed class Plugin : IDalamudPlugin
             HelpMessage = "Shows or hides the configuration window for BlameSerena."
         });
 
+        CommandManager.AddHandler(BlameCommandName, new CommandInfo(OnBlameCommand)
+        {
+            HelpMessage = "Blame someone (defaults to Serena). Usage: /blame [reason]"
+        });
+
         PluginInterface.UiBuilder.Draw += DrawUI;
         PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUI;
         PluginInterface.UiBuilder.OpenMainUi += OnBlameSerenaMainUi;
@@ -108,6 +117,7 @@ public sealed class Plugin : IDalamudPlugin
         ConfigWindow.Dispose();
         CommandManager.RemoveHandler(MainWindowCommandName);
         CommandManager.RemoveHandler(ConfigWindowCommandName);
+        CommandManager.RemoveHandler(BlameCommandName);
         PluginInterface.UiBuilder.OpenMainUi -= OnBlameSerenaMainUi;
 
         Log.Information($"=== {PluginInterface.Manifest.Name} Unloaded ===");
@@ -118,6 +128,107 @@ public sealed class Plugin : IDalamudPlugin
     private void OnBlameSerenaConfigCommand(string command, string args) => ConfigWindow.Toggle();
 
     private void OnBlameSerenaMainUi() => MainWindow.Toggle();
+
+    private async void OnBlameCommand(string command, string args)
+    {
+        if (!Configuration.EnableBlameIntegration)
+        {
+            ChatGui.PrintError("Blame integration is not enabled. Use /blameserenaconfig to configure.");
+            return;
+        }
+
+        if (string.IsNullOrEmpty(Configuration.BlameApiKey) || Configuration.BlameApiKey.StartsWith("CHANGE_THIS"))
+        {
+            ChatGui.PrintError("Please configure your API key in /blameserenaconfig first.");
+            return;
+        }
+
+        string reason = !string.IsNullOrEmpty(args) ? args : null;
+        await SendBlameToDiscord(reason);
+    }
+
+    private async Task SendBlameToDiscord(string reason)
+    {
+        const string SERENA_DISCORD_ID = "803867382447079485";
+        
+        try
+        {
+            using var httpClient = new HttpClient();
+            httpClient.Timeout = TimeSpan.FromSeconds(10);
+            
+            var payload = new
+            {
+                apiKey = Configuration.BlameApiKey,
+                source = "FFXIV Dalamud Plugin",
+                reason = reason,
+                targetUserId = SERENA_DISCORD_ID
+            };
+            
+            var json = JsonSerializer.Serialize(payload);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            
+            if (Configuration.ShowBlameConfirmation)
+            {
+                ChatGui.Print("Sending blame to Discord...");
+            }
+            
+            var response = await httpClient.PostAsync(Configuration.BlameApiEndpoint, content);
+            
+            if (response.IsSuccessStatusCode)
+            {
+                var responseBody = await response.Content.ReadAsStringAsync();
+                var result = JsonSerializer.Deserialize<BlameResponse>(responseBody);
+                
+                if (result?.success == true)
+                {
+                    var message = result.data?.message ?? "Blame sent successfully!";
+                    ChatGui.Print($"[Blame] {message}");
+                }
+                else
+                {
+                    ChatGui.PrintError($"Blame failed: {result?.error ?? "Unknown error"}");
+                }
+            }
+            else if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+            {
+                ChatGui.PrintError("Invalid API key. Please check your configuration.");
+            }
+            else
+            {
+                ChatGui.PrintError($"Failed to send blame: HTTP {response.StatusCode}");
+            }
+        }
+        catch (HttpRequestException ex)
+        {
+            ChatGui.PrintError($"Network error: {ex.Message}");
+        }
+        catch (TaskCanceledException)
+        {
+            ChatGui.PrintError("Request timed out. Please try again.");
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to send blame");
+            ChatGui.PrintError($"Unexpected error: {ex.Message}");
+        }
+    }
+
+    private class BlameResponse
+    {
+        public bool success { get; set; }
+        public BlameData data { get; set; }
+        public string error { get; set; }
+    }
+
+    private class BlameData
+    {
+        public string userId { get; set; }
+        public string userName { get; set; }
+        public int blameCount { get; set; }
+        public string source { get; set; }
+        public string reason { get; set; }
+        public string message { get; set; }
+    }
 
     private void DrawUI()
     {

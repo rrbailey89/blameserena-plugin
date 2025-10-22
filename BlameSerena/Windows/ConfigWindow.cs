@@ -184,5 +184,69 @@ public class ConfigWindow : Window, IDisposable
             }
             lastRoleIdStr = newRoleIdStr;
         }
+
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        // Blame Integration Settings
+        ImGui.TextColored(new Vector4(0.8f, 0.8f, 0.2f, 1.0f), "Blame Integration");
+        
+        var enableBlame = configuration.EnableBlameIntegration;
+        if (ImGui.Checkbox("Enable Blame Commands", ref enableBlame))
+        {
+            configuration.EnableBlameIntegration = enableBlame;
+            configuration.Save();
+        }
+        
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("Enables /blame and /blameserena commands to send blames to Discord");
+        }
+
+        // Blame API Endpoint
+        var blameEndpoint = configuration.BlameApiEndpoint ?? string.Empty;
+        var blameEndpointBuffer = new byte[256];
+        var blameEndpointBytes = System.Text.Encoding.UTF8.GetBytes(blameEndpoint);
+        Array.Copy(blameEndpointBytes, blameEndpointBuffer, Math.Min(blameEndpointBytes.Length, blameEndpointBuffer.Length - 1));
+        if (ImGui.InputText("Blame API Endpoint", blameEndpointBuffer.AsSpan(), ImGuiInputTextFlags.None))
+        {
+            var newEndpoint = System.Text.Encoding.UTF8.GetString(blameEndpointBuffer).TrimEnd('\0');
+            if (newEndpoint != configuration.BlameApiEndpoint)
+            {
+                configuration.BlameApiEndpoint = newEndpoint;
+                configuration.Save();
+            }
+        }
+
+        // Blame API Key
+        var blameKey = configuration.BlameApiKey ?? string.Empty;
+        var blameKeyBuffer = new byte[256];
+        var blameKeyBytes = System.Text.Encoding.UTF8.GetBytes(blameKey);
+        Array.Copy(blameKeyBytes, blameKeyBuffer, Math.Min(blameKeyBytes.Length, blameKeyBuffer.Length - 1));
+        if (ImGui.InputText("Blame API Key", blameKeyBuffer.AsSpan(), ImGuiInputTextFlags.Password))
+        {
+            var newKey = System.Text.Encoding.UTF8.GetString(blameKeyBuffer).TrimEnd('\0');
+            if (newKey != configuration.BlameApiKey)
+            {
+                configuration.BlameApiKey = newKey;
+                configuration.Save();
+            }
+        }
+        
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("Get your API key from the Discord bot dashboard");
+        }
+
+        var showConfirmation = configuration.ShowBlameConfirmation;
+        if (ImGui.Checkbox("Show Blame Confirmation", ref showConfirmation))
+        {
+            configuration.ShowBlameConfirmation = showConfirmation;
+            configuration.Save();
+        }
+
+        ImGui.Spacing();
+        ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "Get your API key from:");
+        ImGui.TextColored(new Vector4(0.4f, 0.7f, 1.0f, 1.0f), "Dashboard > Settings > API Keys");
     }
 }
