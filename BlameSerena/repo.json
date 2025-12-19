@@ -14,10 +14,10 @@
     "DownloadCount": 32,
     "DownloadLinkInstall": "https://github.com/rrbailey89/blameserena-plugin/releases/latest/download/BlameSerena.zip",
     "DownloadLinkUpdate": "https://github.com/rrbailey89/blameserena-plugin/releases/latest/download/BlameSerena.zip",
-    "AssemblyVersion": "2.1.0.0",
+    "AssemblyVersion": "2.2.0.0",
     "ApplicableVersion": "any",
-    "DalamudApiLevel": 13,
-    "Changelog": "Version 2.1.0.0: Added /blame command for Discord integration. Refactored codebase into service-oriented architecture for improved maintainability.",
+    "DalamudApiLevel": 14,
+    "Changelog": "Version 2.2.0.0: updated for api14.",
     "DownloadLinkTesting": "",
     "IconUrl": "https://raw.githubusercontent.com/rrbailey89/blameserena-plugin/master/Data/logo.png"
   }
