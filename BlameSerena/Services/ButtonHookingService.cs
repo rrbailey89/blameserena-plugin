@@ -59,19 +59,9 @@ public unsafe class ButtonHookingService : IButtonHookingService
             return;
         }
 
-        var node = addon->GetNodeById(AddonNodeIds.RecruitButton);
-        if (node == null)
-        {
-            _log.Error($"Recruit button node {AddonNodeIds.RecruitButton} not found");
-            return;
-        }
-
-        var btn = (AtkComponentButton*)node->GetComponent();
+        var btn = GetButtonById(addon, AddonNodeIds.RecruitButton, "Recruit");
         if (btn == null)
-        {
-            _log.Error("Recruit button component not found");
             return;
-        }
 
         _buttonListeners.RecruitButtonListener = (AtkEventListener*)btn;
         nint recvPtr = *((nint*)*(nint*)btn + GameConstants.VTableReceiveEventSlot);
@@ -92,19 +82,9 @@ public unsafe class ButtonHookingService : IButtonHookingService
     public void HookYesButton(nint addonAddress)
     {
         var yesno = (AtkUnitBase*)addonAddress;
-        var node = yesno->GetNodeById(AddonNodeIds.YesButton);
-        if (node == null)
-        {
-            _log.Error($"YesNo: node {AddonNodeIds.YesButton} not found");
-            return;
-        }
-
-        var btn = (AtkComponentButton*)node->GetComponent();
+        var btn = GetButtonById(yesno, AddonNodeIds.YesButton, "YesNo");
         if (btn == null)
-        {
-            _log.Error("YesNo: button component not found");
             return;
-        }
 
         _buttonListeners.YesButtonListener = (AtkEventListener*)btn;
         nint recvPtr = *((nint*)*(nint*)btn + GameConstants.VTableReceiveEventSlot);
@@ -118,6 +98,27 @@ public unsafe class ButtonHookingService : IButtonHookingService
             _hookedVTablePtr = recvPtr;
             _log.Debug("Button hook enabled (component ReceiveEvent)");
         }
+    }
+
+    private AtkComponentButton* GetButtonById(AtkUnitBase* addon, uint nodeId, string label)
+    {
+        var btn = addon->GetComponentButtonById(nodeId);
+        if (btn != null)
+            return btn;
+
+        var node = addon->GetNodeById(nodeId);
+        if (node == null)
+        {
+            _log.Error($"{label}: button node {nodeId} not found");
+            return null;
+        }
+
+        btn = node->GetAsAtkComponentButton();
+        if (btn != null)
+            return btn;
+
+        _log.Error($"{label}: node {nodeId} exists but is type {node->Type} and did not resolve to an AtkComponentButton");
+        return null;
     }
 
     private void ButtonDetour(AtkEventListener* listener, AtkEventType type, uint param, void* p4, void* p5)
