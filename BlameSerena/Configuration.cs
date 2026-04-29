@@ -1,6 +1,8 @@
 ﻿using Dalamud.Configuration;
 using Dalamud.Plugin;
 using System;
+using System.Collections.Generic;
+using BlameSerena.Models;
 
 namespace BlameSerena;
 
@@ -33,6 +35,11 @@ public class Configuration : IPluginConfiguration
     public string BlameApiKey { get; set; } = "";
     public bool EnableBlameIntegration { get; set; } = false;
     public bool ShowBlameConfirmation { get; set; } = true;
+
+    // Party check configuration
+    public bool EnablePartyCheck { get; set; } = false;
+    public DateTime? ScheduledCheckTime { get; set; } = null;
+    public List<PartyCheckEntry> PartyCheckEntries { get; set; } = new();
 
     // the below exist just to make saving less cumbersome
     public void Save()

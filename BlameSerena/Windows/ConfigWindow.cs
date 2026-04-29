@@ -3,6 +3,7 @@ using System.Numerics;
 using Dalamud.Interface.Windowing;
 using Dalamud.Bindings.ImGui;
 using BlameSerena;
+using BlameSerena.Models;
 
 namespace BlameSerena.Windows;
 
@@ -248,5 +249,114 @@ public class ConfigWindow : Window, IDisposable
         ImGui.Spacing();
         ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1.0f), "Get your API key from:");
         ImGui.TextColored(new Vector4(0.4f, 0.7f, 1.0f, 1.0f), "Dashboard > Settings > API Keys");
+
+        ImGui.Separator();
+        ImGui.Spacing();
+
+        // Party Check Settings
+        ImGui.TextColored(new Vector4(0.2f, 0.8f, 0.6f, 1.0f), "Party Check Notifications");
+
+        var enablePartyCheck = configuration.EnablePartyCheck;
+        if (ImGui.Checkbox("Enable Party Check", ref enablePartyCheck))
+        {
+            configuration.EnablePartyCheck = enablePartyCheck;
+            configuration.Save();
+        }
+
+        if (ImGui.IsItemHovered())
+        {
+            ImGui.SetTooltip("At the scheduled time, mentions Discord users whose characters are not in your party (one-shot)");
+        }
+
+        // Scheduled time input
+        var hasTime = configuration.ScheduledCheckTime.HasValue;
+        var scheduledTime = configuration.ScheduledCheckTime ?? DateTime.Now;
+
+        // Date
+        var dateStr = scheduledTime.ToString("yyyy-MM-dd");
+        var dateBuffer = new byte[32];
+        var dateBytes = System.Text.Encoding.UTF8.GetBytes(dateStr);
+        Array.Copy(dateBytes, dateBuffer, Math.Min(dateBytes.Length, dateBuffer.Length - 1));
+        ImGui.SetNextItemWidth(120);
+        if (ImGui.InputText("Date (yyyy-MM-dd)", dateBuffer.AsSpan(), ImGuiInputTextFlags.None))
+        {
+            var newDateStr = System.Text.Encoding.UTF8.GetString(dateBuffer).TrimEnd('\0');
+            if (DateTime.TryParse(newDateStr + " " + scheduledTime.ToString("HH:mm"), out var newDateTime))
+            {
+                configuration.ScheduledCheckTime = newDateTime;
+                configuration.Save();
+            }
+        }
+
+        // Time
+        var timeStr = scheduledTime.ToString("HH:mm");
+        var timeBuffer = new byte[16];
+        var timeBytes = System.Text.Encoding.UTF8.GetBytes(timeStr);
+        Array.Copy(timeBytes, timeBuffer, Math.Min(timeBytes.Length, timeBuffer.Length - 1));
+        ImGui.SetNextItemWidth(80);
+        if (ImGui.InputText("Time (HH:mm)", timeBuffer.AsSpan(), ImGuiInputTextFlags.None))
+        {
+            var newTimeStr = System.Text.Encoding.UTF8.GetString(timeBuffer).TrimEnd('\0');
+            if (DateTime.TryParse(scheduledTime.ToString("yyyy-MM-dd") + " " + newTimeStr, out var newDateTime))
+            {
+                configuration.ScheduledCheckTime = newDateTime;
+                configuration.Save();
+            }
+        }
+
+        ImGui.Spacing();
+        ImGui.TextUnformatted("Character / Discord User ID pairs:");
+
+        // Table of entries
+        int removeIndex = -1;
+        for (int i = 0; i < configuration.PartyCheckEntries.Count; i++)
+        {
+            ImGui.PushID(i);
+            var entry = configuration.PartyCheckEntries[i];
+
+            // Character name
+            var nameBuffer = new byte[128];
+            var nameBytes = System.Text.Encoding.UTF8.GetBytes(entry.CharacterName);
+            Array.Copy(nameBytes, nameBuffer, Math.Min(nameBytes.Length, nameBuffer.Length - 1));
+            ImGui.SetNextItemWidth(200);
+            if (ImGui.InputText("##charname", nameBuffer.AsSpan(), ImGuiInputTextFlags.None))
+            {
+                entry.CharacterName = System.Text.Encoding.UTF8.GetString(nameBuffer).TrimEnd('\0');
+                configuration.Save();
+            }
+
+            ImGui.SameLine();
+
+            // Discord user ID
+            var idBuffer = new byte[32];
+            var idBytes = System.Text.Encoding.UTF8.GetBytes(entry.DiscordUserId);
+            Array.Copy(idBytes, idBuffer, Math.Min(idBytes.Length, idBuffer.Length - 1));
+            ImGui.SetNextItemWidth(180);
+            if (ImGui.InputText("##discordid", idBuffer.AsSpan(), ImGuiInputTextFlags.CharsDecimal))
+            {
+                entry.DiscordUserId = System.Text.Encoding.UTF8.GetString(idBuffer).TrimEnd('\0');
+                configuration.Save();
+            }
+
+            ImGui.SameLine();
+            if (ImGui.Button("X##remove"))
+            {
+                removeIndex = i;
+            }
+
+            ImGui.PopID();
+        }
+
+        if (removeIndex >= 0)
+        {
+            configuration.PartyCheckEntries.RemoveAt(removeIndex);
+            configuration.Save();
+        }
+
+        if (ImGui.Button("+ Add Entry"))
+        {
+            configuration.PartyCheckEntries.Add(new PartyCheckEntry());
+            configuration.Save();
+        }
     }
 }

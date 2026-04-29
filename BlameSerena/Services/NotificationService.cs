@@ -21,6 +21,13 @@ public interface INotificationService
         ulong roleId,
         string apiEndpoint,
         string category);
+
+    Task SendPartyCheckNotificationAsync(
+        string discordUserId,
+        string characterName,
+        string playerName,
+        string apiEndpoint,
+        ulong channelId);
 }
 
 public class NotificationService : INotificationService
@@ -82,6 +89,53 @@ public class NotificationService : INotificationService
         catch (Exception ex)
         {
             _log.Error(ex, $"[HTTP SEND] Unexpected error sending notification to {apiEndpoint}.");
+        }
+    }
+
+    public async Task SendPartyCheckNotificationAsync(
+        string discordUserId,
+        string characterName,
+        string playerName,
+        string apiEndpoint,
+        ulong channelId)
+    {
+        try
+        {
+            using var httpClient = new HttpClient();
+            httpClient.Timeout = TimeSpan.FromSeconds(15);
+            var payload = new
+            {
+                PlayerName = playerName,
+                CharacterName = characterName,
+                TargetDiscordUserId = discordUserId,
+                ChannelId = channelId
+            };
+            var json = JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = false });
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            _log.Information($"[HTTP SEND] Sending party check notification. Payload: {json}");
+            var response = await httpClient.PostAsync(apiEndpoint, content);
+
+            if (response.IsSuccessStatusCode)
+            {
+                _log.Information($"[HTTP SEND] Party check notification sent for {characterName} (Discord: {discordUserId})");
+            }
+            else
+            {
+                string r = await response.Content.ReadAsStringAsync();
+                _log.Error($"[HTTP SEND] Failed party check notification. Status: {response.StatusCode}. Response: {r}");
+            }
+        }
+        catch (HttpRequestException ex)
+        {
+            _log.Error(ex, $"[HTTP SEND] HTTP exception sending party check to {apiEndpoint}.");
+        }
+        catch (TaskCanceledException ex)
+        {
+            _log.Error(ex, $"[HTTP SEND] Party check request timed out to {apiEndpoint}.");
+        }
+        catch (Exception ex)
+        {
+            _log.Error(ex, $"[HTTP SEND] Unexpected error sending party check to {apiEndpoint}.");
         }
     }
 }

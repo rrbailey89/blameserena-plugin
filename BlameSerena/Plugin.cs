@@ -24,7 +24,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
     [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
     [PluginService] internal static ICommandManager CommandManager { get; private set; } = null!;
-    [PluginService] internal static IClientState ClientState { get; private set; } = null!;
+    [PluginService] internal static IPlayerState PlayerState { get; private set; } = null!;
     [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
     [PluginService] internal static IChatGui ChatGui { get; private set; } = null!;
@@ -33,6 +33,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IAddonLifecycle AddonLifecycle { get; private set; } = null!;
     [PluginService] internal static IPartyFinderGui PartyFinderGui { get; private set; } = null!;
     [PluginService] internal static IGameInteropProvider HookProvider { get; private set; } = null!;
+    [PluginService] internal static IPartyList PartyList { get; private set; } = null!;
 
     private const string MainWindowCommandName = "/blameserena";
     private const string ConfigWindowCommandName = "/blameserenaconfig";
@@ -49,6 +50,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly IPartyFinderService _partyFinderService;
     private readonly IButtonHookingService _buttonHookingService;
     private readonly IUIService _uiService;
+    private readonly IPartyCheckService _partyCheckService;
 
     public static string LogoPath {
         get {
@@ -69,6 +71,7 @@ public sealed class Plugin : IDalamudPlugin
         _partyFinderService = new PartyFinderService(Log, _dutyDataService, _notificationService);
         _buttonHookingService = new ButtonHookingService(HookProvider, Log);
         _uiService = new UIService(Log);
+        _partyCheckService = new PartyCheckService(Log, PartyList, _notificationService, PlayerState, Configuration);
 
         // Wire up button hook events
         _buttonHookingService.OnRecruitButtonClicked += OnButtonClickDetected;
@@ -99,6 +102,9 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUI;
         PluginInterface.UiBuilder.OpenMainUi += OnBlameSerenaMainUi;
 
+        // Register framework update for party check
+        Framework.Update += OnFrameworkUpdate;
+
         // Register event-driven hooks
         AddonLifecycle.RegisterListener(AddonEvent.PostSetup, AddonNames.LookingForGroupCondition, OnCondWindow);
         AddonLifecycle.RegisterListener(AddonEvent.PreFinalize, AddonNames.LookingForGroupCondition, OnCondWindow);
@@ -109,6 +115,7 @@ public sealed class Plugin : IDalamudPlugin
 
     public void Dispose()
     {
+        Framework.Update -= OnFrameworkUpdate;
         AddonLifecycle.UnregisterListener(OnCondWindow);
 
         _buttonHookingService?.Dispose();
@@ -122,6 +129,8 @@ public sealed class Plugin : IDalamudPlugin
 
         Log.Information($"=== {PluginInterface.Manifest.Name} Unloaded ===");
     }
+
+    private void OnFrameworkUpdate(IFramework framework) => _partyCheckService.Update();
 
     private void OnBlameSerenaMainCommand(string command, string args) => MainWindow.Toggle();
 
@@ -143,11 +152,11 @@ public sealed class Plugin : IDalamudPlugin
             return;
         }
 
-        string reason = !string.IsNullOrEmpty(args) ? args : null;
+        string? reason = !string.IsNullOrEmpty(args) ? args : null;
         await SendBlameToDiscord(reason);
     }
 
-    private async Task SendBlameToDiscord(string reason)
+    private async Task SendBlameToDiscord(string? reason)
     {
         const string SERENA_DISCORD_ID = "803867382447079485";
         
@@ -216,18 +225,18 @@ public sealed class Plugin : IDalamudPlugin
     private class BlameResponse
     {
         public bool success { get; set; }
-        public BlameData data { get; set; }
-        public string error { get; set; }
+        public BlameData? data { get; set; }
+        public string? error { get; set; }
     }
 
     private class BlameData
     {
-        public string userId { get; set; }
-        public string userName { get; set; }
+        public string? userId { get; set; }
+        public string? userName { get; set; }
         public int blameCount { get; set; }
-        public string source { get; set; }
-        public string reason { get; set; }
-        public string message { get; set; }
+        public string? source { get; set; }
+        public string? reason { get; set; }
+        public string? message { get; set; }
     }
 
     private void DrawUI()
@@ -341,7 +350,7 @@ public sealed class Plugin : IDalamudPlugin
         _partyFinderService.CaptureStoredRecruitmentInfo();
 
         // Handle user preference for payload confirmation
-        var playerName = ClientState.LocalPlayer?.Name.TextValue ?? "Unknown Player";
+        var playerName = PlayerState.IsLoaded ? PlayerState.CharacterName : "Unknown Player";
         switch (Configuration.SendPayloadConfirmation)
         {
             case PayloadSendPreference.AlwaysSend:
