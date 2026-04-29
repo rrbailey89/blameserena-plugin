@@ -11,32 +11,26 @@ jobs:
     runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
-        dotnet-version: '8.0.x'
+        dotnet-version: '10.0.x'
 
     - name: Clone dalamud-distrib
       run: |
         git clone --depth 1 https://github.com/goatcorp/dalamud-distrib.git
         $dalamudDir = "$env:APPDATA\XIVLauncher\addon\Hooks\dev"
         mkdir $dalamudDir -Force
-        Copy-Item -Path dalamud-distrib/api13/latest.zip -Destination latest.zip
+        Copy-Item -Path dalamud-distrib/api15/latest.zip -Destination latest.zip
         Expand-Archive -Path latest.zip -DestinationPath $dalamudDir -Force
+
+    - name: Clean output folders
+      run: Remove-Item -Recurse -Force BlameSerena/bin,BlameSerena/obj -ErrorAction SilentlyContinue
 
     - name: Build
       run: dotnet build BlameSerena/BlameSerena.csproj -c Release
-
-    - name: Create images directory and move logo
-      run: |
-        mkdir -p BlameSerena/bin/Release/images
-        copy Data/logo.png BlameSerena/bin/Release/images/logo.png
-
-    - name: Zip plugin
-      run: |
-        powershell -Command "Compress-Archive -Path BlameSerena/bin/Release/BlameSerena.dll,BlameSerena/bin/Release/images -DestinationPath BlameSerena.zip"
 
     - name: Create Release
       id: create_release
@@ -55,6 +49,6 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./BlameSerena.zip
+        asset_path: ./BlameSerena/bin/Release/BlameSerena/latest.zip
         asset_name: BlameSerena.zip
-        asset_content_type: application/zip 
+        asset_content_type: application/zip
